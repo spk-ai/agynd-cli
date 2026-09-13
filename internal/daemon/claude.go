@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/agynio/agynd-cli/internal/tracing"
 	claude "github.com/agynio/claude-sdk-go"
 )
+
+var errClaudeTurnFailed = errors.New("Claude returned an error result; reconciliation required")
 
 func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
 	// version is unused: the Claude SDK has no client-info metadata.
@@ -142,6 +145,9 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 			0,
 			fmt.Errorf("run claude turn for message %s on thread %s: %w", message.ID, threadID, err),
 		)
+	}
+	if result == nil || result.IsError {
+		return operationError(opClaudeTurn, 0, errClaudeTurnFailed)
 	}
 	response := strings.TrimSpace(result.Response)
 	if err := d.publishFinalMessage(ctx, SDKClaude, message, response); err != nil {

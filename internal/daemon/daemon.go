@@ -646,7 +646,7 @@ func operationError(op string, timeout time.Duration, err error) error {
 
 func isTerminalAgentProcessingError(err error) bool {
 	var terminalErr *terminalCodexTurnError
-	return errors.As(err, &terminalErr)
+	return errors.As(err, &terminalErr) || errors.Is(err, errClaudeTurnFailed)
 }
 
 func isRetryableCodexErrorNotification(err error) bool {
