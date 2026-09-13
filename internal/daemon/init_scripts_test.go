@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -183,7 +184,7 @@ func TestExecuteInitScriptNonZeroLogsAndContinues(t *testing.T) {
 		Description: "setup step",
 		Script:      "echo ok; echo bad 1>&2; exit 2",
 	}
-	if err := executeInitScript(context.Background(), script, t.TempDir()); err != nil {
+	if err := executeInitScript(context.Background(), script, t.TempDir(), false); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	output := captureOutput()
@@ -196,6 +197,48 @@ func TestExecuteInitScriptNonZeroLogsAndContinues(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, "init script script-err exited with code 2") {
 		t.Fatalf("unexpected exit log output: %q", logOutput)
+	}
+}
+
+func TestRequiredInitScriptsStopBeforeLaterScripts(t *testing.T) {
+	for _, mode := range []string{"true", "false", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("AGYN_INIT_SCRIPTS_REQUIRED", mode)
+			workDir := t.TempDir()
+			created := time.Now()
+			client := &fakeInitScriptsClient{responses: []*agentsv1.ListInitScriptsResponse{{
+				InitScripts: []*agentsv1.InitScript{
+					{Meta: &agentsv1.EntityMeta{Id: "failed", CreatedAt: timestamppb.New(created)}, Script: "exit 17"},
+					{Meta: &agentsv1.EntityMeta{Id: "later", CreatedAt: timestamppb.New(created.Add(time.Second))}, Script: "touch later"},
+				},
+			}}}
+			err := runInitScripts(context.Background(), client, "agent", "", workDir)
+			_, statErr := os.Stat(filepath.Join(workDir, "later"))
+			if mode == "false" {
+				if err != nil || statErr != nil {
+					t.Fatalf("optional scripts should retain continuation: err=%v stat=%v", err, statErr)
+				}
+			} else {
+				if err == nil || !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("required or invalid mode must stop setup: err=%v stat=%v", err, statErr)
+				}
+				if mode == "true" && !strings.Contains(err.Error(), "exit code 17") {
+					t.Fatalf("missing failure context: %v", err)
+				}
+				if mode == "invalid" && len(client.requests) != 0 {
+					t.Fatal("invalid mode should fail before fetching or executing scripts")
+				}
+			}
+		})
+	}
+}
+
+func TestInitScriptCancellationIsNotAnOptionalExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := executeInitScript(ctx, initScript{ID: "cancel", Script: "exec sleep 30"}, t.TempDir(), false)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline error, got %v", err)
 	}
 }
 
