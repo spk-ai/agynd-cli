@@ -2,6 +2,8 @@ module github.com/agynio/agynd-cli
 
 go 1.26.1
 
+replace github.com/agynio/claude-sdk-go => github.com/spk-ai/claude-sdk-go v0.2.2-0.20260913223410-16286f344ebc
+
 require (
 	github.com/agynio/agn-sdk-go v0.1.0
 	github.com/agynio/claude-sdk-go v0.2.1

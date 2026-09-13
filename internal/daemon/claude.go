@@ -147,7 +147,7 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 		)
 	}
 	if result == nil || result.IsError {
-		return operationError(opClaudeTurn, 0, errClaudeTurnFailed)
+		return operationError(opClaudeTurn, 0, claudeTurnFailure(result))
 	}
 	response := strings.TrimSpace(result.Response)
 	if err := d.publishFinalMessage(ctx, SDKClaude, message, response); err != nil {
@@ -157,6 +157,26 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 		return err
 	}
 	return nil
+}
+
+func claudeTurnFailure(result *claude.TurnResult) error {
+	if result == nil {
+		return errClaudeTurnFailed
+	}
+	// CLI strings may contain upstream content. Only known metadata is logged.
+	subtype, reason, status := "unknown", "unknown", 0
+	switch result.Subtype {
+	case "success", "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries":
+		subtype = result.Subtype
+	}
+	switch result.TerminalReason {
+	case "api_error", "completed", "max_turns", "max_budget_usd", "max_structured_output_retries", "aborted_streaming", "aborted_tools":
+		reason = result.TerminalReason
+	}
+	if result.APIErrorStatus != nil && *result.APIErrorStatus >= 400 && *result.APIErrorStatus <= 599 {
+		status = *result.APIErrorStatus
+	}
+	return fmt.Errorf("%w (result_subtype=%s, terminal_reason=%s, api_status=%d)", errClaudeTurnFailed, subtype, reason, status)
 }
 
 // claudeModel picks what to pin the CLI to: the platform Model UUID the proxy

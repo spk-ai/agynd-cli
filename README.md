@@ -37,6 +37,31 @@ acknowledges the inbox, and its sync loop does not automatically retry the turn.
 The upstream error body is not included in the processing error. Reconcile
 possible side effects before retrying; an error does not prove no tools ran.
 
+Failed-result errors now include allowlisted result subtype/terminal reason and
+an HTTP error status from 400 through 599 when reported by the CLI. Unknown or
+unsafe strings become `unknown`; absent/invalid status becomes `0`. Response
+bodies, arbitrary stop reasons and native session identifiers are not included.
+`IsError` remains authoritative even when the result subtype is `success`.
+
+This diagnostic change is stacked on `fix/claude-error-results` and temporarily
+pins [the independent SDK metadata patch](https://github.com/spk-ai/claude-sdk-go/tree/feat/result-diagnostics).
+Replace the fork pin with an upstream SDK release before merge. It contains no
+A2A state machine, automatic retry policy, session-persistence or Kubernetes
+integration. After the normal API generation, focused verification is
+`go test -race ./internal/daemon -run 'ClaudeError' -count=1` with an isolated HOME.
+These tests verify safe diagnostics and no reply/ACK after failure, not the cause
+of a past native failure or production authentication reliability.
+
+`TestClaudeDiagnosticNative401` is opt-in through
+`AGYN_CLAUDE_DIAGNOSTIC_TEST=true` and an absolute
+`AGYN_CLAUDE_DIAGNOSTIC_BINARY`. It uses fresh configuration/workspace directories,
+replaces provider credentials with a nonsecret fixture value, and points the CLI
+at a loopback server that always returns HTTP 401. It verifies the actual SDK
+result reaches the daemon as a terminal failure with safe status metadata and
+no reply or inbox ACK. No model backend serves the request. Run it in a
+network-denied environment to independently exclude external traffic; ordinary
+tests skip it. This does not reproduce or explain a historical provider failure.
+
 The GitHub E2E workflow runs this repository's local E2E tests with:
 
 ```bash
