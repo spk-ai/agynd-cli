@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/agynio/agynd-cli/internal/claudebridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
@@ -12,7 +13,7 @@ import (
 	claude "github.com/agynio/claude-sdk-go"
 )
 
-func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+func newClaudeDaemon(ctx context.Context, cfg config.Config, version string, session *claudebridge.Session) (*Daemon, error) {
 	// version is unused: the Claude SDK has no client-info metadata.
 	_ = version
 
@@ -64,6 +65,13 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 			"IS_SANDBOX=1",
 		},
 	}
+	if session != nil {
+		if session.Transcript != "" {
+			options.Resume = session.Transcript
+		} else {
+			options.SessionID = session.ID
+		}
+	}
 	if model := claudeModel(cfg, setup.agent.GetModel()); model != "" {
 		options.Model = model
 		if !cfg.LLMNative {
@@ -95,18 +103,19 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string) (*D
 	}
 
 	return &Daemon{
-		cfg:         cfg,
-		sdk:         SDKClaude,
-		gatewayConn: setup.gatewayConn,
-		threads:     setup.threads,
-		agents:      setup.agents,
-		agentInbox:  setup.agentInbox,
-		runners:     setup.runners,
-		subscriber:  subscriber.New(setup.notifications, cfg.ThreadID),
-		consumer:    platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
-		claude:      claudeClient,
-		agent:       setup.agent,
-		tracing:     tracingExporter,
+		cfg:           cfg,
+		sdk:           SDKClaude,
+		gatewayConn:   setup.gatewayConn,
+		threads:       setup.threads,
+		agents:        setup.agents,
+		agentInbox:    setup.agentInbox,
+		runners:       setup.runners,
+		subscriber:    subscriber.New(setup.notifications, cfg.ThreadID),
+		consumer:      platform.NewInboxConsumer(setup.agentInbox, pageSize, pageTimeout),
+		claude:        claudeClient,
+		claudeSession: session,
+		agent:         setup.agent,
+		tracing:       tracingExporter,
 	}, nil
 }
 
@@ -142,6 +151,9 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 			0,
 			fmt.Errorf("run claude turn for message %s on thread %s: %w", message.ID, threadID, err),
 		)
+	}
+	if result == nil || d.claudeSession != nil && result.SessionID != d.claudeSession.ID {
+		return operationError(opClaudeTurn, 0, errClaudeSessionMismatch)
 	}
 	response := strings.TrimSpace(result.Response)
 	if err := d.publishFinalMessage(ctx, SDKClaude, message, response); err != nil {

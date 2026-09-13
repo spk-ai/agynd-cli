@@ -20,6 +20,7 @@ import (
 	agnsdk "github.com/agynio/agn-sdk-go"
 	agentsv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/agents/v1"
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
+	"github.com/agynio/agynd-cli/internal/claudebridge"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
 	"github.com/agynio/agynd-cli/internal/inboxjournal"
@@ -83,28 +84,30 @@ const (
 const mcpProbeID = "agynd-mcp-ready"
 
 type Daemon struct {
-	cfg           config.Config
-	sdk           string
-	gatewayConn   platformConn
-	threads       *platform.Threads
-	agents        gatewayv1.AgentsGatewayClient
-	agentInbox    *platform.Agents
-	runners       runnersClient
-	subscriber    messageSubscriber
-	consumer      messageConsumer
-	codex         codexClient
-	mapping       *codexbridge.ThreadMapping
-	mappingStore  *codexbridge.ThreadMappingStore
-	tracker       *codexbridge.TurnTracker
-	agn           *agnsdk.Client
-	claude        claudeClient
-	agent         *agentsv1.Agent
-	tracing       *tracing.Exporter
-	tracingProxy  *tracingproxy.Proxy
-	claudeReadyMu sync.Mutex
-	claudeReady   bool
-	mcpReadyMu    sync.Mutex
-	mcpReady      bool
+	cfg             config.Config
+	sdk             string
+	gatewayConn     platformConn
+	threads         *platform.Threads
+	agents          gatewayv1.AgentsGatewayClient
+	agentInbox      *platform.Agents
+	runners         runnersClient
+	subscriber      messageSubscriber
+	consumer        messageConsumer
+	codex           codexClient
+	mapping         *codexbridge.ThreadMapping
+	mappingStore    *codexbridge.ThreadMappingStore
+	tracker         *codexbridge.TurnTracker
+	agn             *agnsdk.Client
+	claude          claudeClient
+	claudeSession   *claudebridge.Session
+	claudeCloseOnce sync.Once
+	agent           *agentsv1.Agent
+	tracing         *tracing.Exporter
+	tracingProxy    *tracingproxy.Proxy
+	claudeReadyMu   sync.Mutex
+	claudeReady     bool
+	mcpReadyMu      sync.Mutex
+	mcpReady        bool
 
 	inboxJournal      *inboxjournal.Journal
 	inboxJournalReady bool
@@ -157,6 +160,20 @@ type platformSetup struct {
 }
 
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
+	var session *claudebridge.Session
+	if cfg.SDK == SDKClaude {
+		var err error
+		session, err = prepareClaudeSession(cfg)
+		if err != nil {
+			return nil, err
+		}
+		// Ownership transfers only after a fully constructed daemon is returned.
+		defer func() {
+			if session != nil {
+				_ = session.Close()
+			}
+		}()
+	}
 	if err := prepareAgentCLI(cfg); err != nil {
 		return nil, err
 	}
@@ -175,7 +192,11 @@ func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error
 		}
 		return newAgnDaemon(ctx, cfg, version)
 	case SDKClaude:
-		return newClaudeDaemon(ctx, cfg, version)
+		daemon, err := newClaudeDaemon(ctx, cfg, version, session)
+		if err == nil {
+			session = nil
+		}
+		return daemon, err
 	default:
 		return nil, fmt.Errorf("unknown sdk %q", cfg.SDK)
 	}
@@ -481,9 +502,17 @@ func (d *Daemon) Close() {
 	if d.agn != nil {
 		_ = d.agn.Close()
 	}
-	if d.claude != nil {
-		_ = d.claude.Close()
-	}
+	d.claudeCloseOnce.Do(func() {
+		if d.claude != nil {
+			if err := d.claude.Close(); err != nil {
+				log.Printf("Claude close failed; retain session lock until daemon exit: %v", err)
+				return
+			}
+		}
+		if d.claudeSession != nil {
+			_ = d.claudeSession.Close()
+		}
+	})
 	if d.tracing != nil {
 		_ = d.tracing.Close()
 	}
@@ -651,7 +680,7 @@ func operationError(op string, timeout time.Duration, err error) error {
 func isTerminalAgentProcessingError(err error) bool {
 	var terminalErr *terminalCodexTurnError
 	var inboxErr *terminalInboxError
-	return errors.As(err, &terminalErr) || errors.As(err, &inboxErr)
+	return errors.As(err, &terminalErr) || errors.As(err, &inboxErr) || errors.Is(err, errClaudeSessionMismatch)
 }
 
 func isRetryableCodexErrorNotification(err error) bool {

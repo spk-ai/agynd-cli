@@ -178,11 +178,11 @@ func skillsDirForSDK(sdk string) (string, error) {
 		// Codex reads $CODEX_HOME/skills too and marks it deprecated.
 		return filepath.Join(codexHomeEnv(), ".agents", "skills"), nil
 	case SDKClaude:
-		home, err := os.UserHomeDir()
+		directory, err := claudeConfigDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve home directory: %w", err)
 		}
-		return filepath.Join(home, ".claude", "skills"), nil
+		return filepath.Join(directory, "skills"), nil
 	default:
 		// agn has no skills feature: its skills reach the model in the system
 		// prompt and nothing is written for them.

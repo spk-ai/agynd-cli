@@ -62,11 +62,10 @@ type claudeMCPServer struct {
 // same document and dropping them would restore interactive tool approval and
 // take the environment's MCP wiring with it.
 func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServer, native bool) error {
-	home, err := os.UserHomeDir()
+	claudeDir, err := claudeConfigDir()
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
-	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		return fmt.Errorf("create claude config dir: %w", err)
 	}
