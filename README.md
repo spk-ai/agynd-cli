@@ -58,7 +58,10 @@ of a past native failure or production authentication reliability.
 replaces provider credentials with a nonsecret fixture value, and points the CLI
 at a loopback server that always returns HTTP 401. It verifies the actual SDK
 result reaches the daemon as a terminal failure with safe status metadata and
-no reply or inbox ACK. No model backend serves the request. Run it in a
+no reply or inbox ACK. The fixture drains the bounded request body and marks the
+response non-retryable with `x-should-retry: false`. Native tools and auto-update
+are disabled; first-run state uses the daemon's existing initializer. No model
+backend serves the request. Run it in a
 network-denied environment to independently exclude external traffic; ordinary
 tests skip it. This does not reproduce or explain a historical provider failure.
 
