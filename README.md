@@ -28,6 +28,18 @@ it into the local VM, and set it as the agent's init image:
 agyn local load-image my-agent-init:dev
 ```
 
+## Required Initialization
+
+Set `AGYN_INIT_SCRIPTS_REQUIRED=true` in an operator-managed environment when
+initialization is a prerequisite for agent execution. A nonzero environment or
+agent init-script exit then aborts daemon setup before the agent CLI starts;
+later scripts do not run. Invalid boolean values also abort setup. With the
+variable unset or false, nonzero exits retain their existing log-and-continue
+behavior. Context cancellation always aborts setup, in either mode.
+
+This does not authenticate scripts or make agent execution exactly once. Use
+trusted scripts, bounded startup checks and durable execution reconciliation.
+
 ## E2E validation
 
 The GitHub E2E workflow runs this repository's local E2E tests with:

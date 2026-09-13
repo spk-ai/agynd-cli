@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +30,20 @@ type initScript struct {
 }
 
 func runInitScripts(ctx context.Context, client initScriptsClient, agentID string, environmentID string, workDir string) error {
+	required := false
+	if value := strings.TrimSpace(os.Getenv("AGYN_INIT_SCRIPTS_REQUIRED")); value != "" {
+		var err error
+		required, err = strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("AGYN_INIT_SCRIPTS_REQUIRED must be a boolean")
+		}
+	}
 	scripts, err := listInitScripts(ctx, client, agentID, environmentID)
 	if err != nil {
 		return err
 	}
 	for _, script := range scripts {
-		if err := executeInitScript(ctx, script, workDir); err != nil {
+		if err := executeInitScript(ctx, script, workDir, required); err != nil {
 			return err
 		}
 	}
@@ -134,7 +143,7 @@ func initScriptFromProto(script *agentsv1.InitScript) (initScript, error) {
 	}, nil
 }
 
-func executeInitScript(ctx context.Context, script initScript, workDir string) error {
+func executeInitScript(ctx context.Context, script initScript, workDir string, required bool) error {
 	logInitScriptStart(script)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script.Script)
 	if strings.TrimSpace(workDir) != "" {
@@ -143,12 +152,18 @@ func executeInitScript(ctx context.Context, script initScript, workDir string) e
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			log.Printf("init script %s exited with code %d", script.ID, exitErr.ExitCode())
+			if required {
+				return fmt.Errorf("required init script %s failed with exit code %d", script.ID, exitErr.ExitCode())
+			}
 			return nil
 		}
 		return fmt.Errorf("run init script %s: %w", script.ID, err)
