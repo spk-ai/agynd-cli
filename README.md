@@ -57,6 +57,44 @@ behavior. Context cancellation always aborts setup, in either mode.
 This does not authenticate scripts or make agent execution exactly once. Use
 trusted scripts, bounded startup checks and durable execution reconciliation.
 
+## Durable inbox guard (opt-in)
+
+Set `AGYN_INBOX_JOURNAL_DIR` to a private, daemon-owned directory on durable
+instance storage to disable automatic replay of ambiguous agent turns. The
+journal is shared by all SDK bridges; unset preserves the existing behavior.
+It requires instance inbox items, not the legacy thread-ack path.
+
+Intent is fsynced before invoking the agent. Completion is persisted before the
+inbox ACK, so an ACK retry does not rerun the agent or republish its final reply.
+A pending record after an agent error or process replacement stops processing
+with a reconciliation error. It does not infer whether tools already succeeded.
+Corrupt, missing-required, mismatched or unsafe state fails closed.
+
+A coordinator can also set `AGYN_INBOX_CONTROL_FILE` to an absolute path to a
+private JSON file installed before inbox consumption:
+
+```json
+{
+  "version": 1,
+  "instance_id": "1c2f0f4e-8b9d-4a5b-9b3c-1d2e3f4a5b6c",
+  "allowed_message_id": "new-message-id",
+  "ack_only_message_ids": ["explicitly-retired-message-id"]
+}
+```
+
+Only the allowed message may execute. Listed retired messages are durably
+marked `ack_only` and acknowledged as the instance, without running an agent.
+This is a discard decision, not proof that an interrupted turn completed. All
+other inbox messages stop processing. Control requires the durable journal.
+
+The coordinator must stop and verify removal of the previous workload before
+authorizing a new one, and audit explicit reconciliation of ambiguous work.
+Never build the control file from model output or silently retire an unknown
+request. The journal stores identity and content hashes, not message bodies.
+Keep it for the lifetime of the instance; deleting it removes replay protection.
+External side effects still require their own idempotency or human review.
+Neither a writable journal nor root-run agents provide a security boundary.
+
 ## E2E validation
 
 The GitHub E2E workflow runs this repository's local E2E tests with:
