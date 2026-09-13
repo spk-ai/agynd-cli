@@ -47,6 +47,11 @@ func TestClaudeDiagnosticNative401(t *testing.T) {
 	} {
 		t.Setenv(key, value)
 	}
+	// Unset selects the default HOME layout; an explicitly empty path is invalid
+	// when the independently proposed session-persistence adapter is present.
+	if err := os.Unsetenv("CLAUDE_CONFIG_DIR"); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeClaudeState(); err != nil {
 		t.Fatal(err)
 	}
