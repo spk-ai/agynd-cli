@@ -2,8 +2,8 @@ module github.com/agynio/agynd-cli
 
 go 1.26.1
 
-// Temporary reviewed fork until the session-selection API is released upstream.
-replace github.com/agynio/claude-sdk-go => github.com/spk-ai/claude-sdk-go v0.2.2-0.20260913182401-0cdc8146a9d6
+// Lab-only combination of the independently reviewed session and metadata APIs.
+replace github.com/agynio/claude-sdk-go => github.com/spk-ai/claude-sdk-go v0.2.2-0.20260913233034-54490e0a7b4b
 
 require (
 	github.com/agynio/agn-sdk-go v0.1.0

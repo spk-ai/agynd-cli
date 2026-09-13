@@ -158,6 +158,37 @@ acknowledges the inbox, and its sync loop does not automatically retry the turn.
 The upstream error body is not included in the processing error. Reconcile
 possible side effects before retrying; an error does not prove no tools ran.
 
+Failed-result errors now include allowlisted result subtype/terminal reason and
+an HTTP error status from 400 through 599 when reported by the CLI. Unknown or
+unsafe strings become `unknown`; absent/invalid status becomes `0`. Response
+bodies, arbitrary stop reasons and native session identifiers are not included.
+`IsError` remains authoritative even when the result subtype is `success`.
+
+The independently reviewable diagnostic change is stacked on
+`fix/claude-error-results`. This `lab/claude-diagnostics-integration` branch
+combines it with session persistence, the inbox guard and required init scripts
+for local acceptance only. It pins the SDK's lab session/diagnostics combination;
+replace that fork pin with an upstream SDK release before production use.
+Neither combined branch is a bundled upstream proposal. No A2A state machine or
+Kubernetes integration is added to the daemon. After normal API generation,
+focused verification is
+`go test -race ./internal/daemon -run 'ClaudeError' -count=1` with an isolated HOME.
+These tests verify safe diagnostics and no reply/ACK after failure, not the cause
+of a past native failure or production authentication reliability.
+
+`TestClaudeDiagnosticNative401` is opt-in through
+`AGYN_CLAUDE_DIAGNOSTIC_TEST=true` and an absolute
+`AGYN_CLAUDE_DIAGNOSTIC_BINARY`. It uses fresh configuration/workspace directories,
+replaces provider credentials with a nonsecret fixture value, and points the CLI
+at a loopback server that always returns HTTP 401. It verifies the actual SDK
+result reaches the daemon as a terminal failure with safe status metadata and
+no reply or inbox ACK. The fixture drains the bounded request body and marks the
+response non-retryable with `x-should-retry: false`. Native tools and auto-update
+are disabled; first-run state uses the daemon's existing initializer. No model
+backend serves the request. Run it in a
+network-denied environment to independently exclude external traffic; ordinary
+tests skip it. This does not reproduce or explain a historical provider failure.
+
 The GitHub E2E workflow runs this repository's local E2E tests with:
 
 ```bash
