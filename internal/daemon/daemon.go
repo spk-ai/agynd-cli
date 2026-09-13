@@ -22,6 +22,7 @@ import (
 	gatewayv1 "github.com/agynio/agynd-cli/.gen/go/agynio/api/gateway/v1"
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 	"github.com/agynio/agynd-cli/internal/config"
+	"github.com/agynio/agynd-cli/internal/inboxjournal"
 	"github.com/agynio/agynd-cli/internal/platform"
 	"github.com/agynio/agynd-cli/internal/subscriber"
 	"github.com/agynio/agynd-cli/internal/tracing"
@@ -104,6 +105,9 @@ type Daemon struct {
 	claudeReady   bool
 	mcpReadyMu    sync.Mutex
 	mcpReady      bool
+
+	inboxJournal      *inboxjournal.Journal
+	inboxJournalReady bool
 
 	processing     atomic.Bool
 	processingWake chan struct{}
@@ -646,7 +650,8 @@ func operationError(op string, timeout time.Duration, err error) error {
 
 func isTerminalAgentProcessingError(err error) bool {
 	var terminalErr *terminalCodexTurnError
-	return errors.As(err, &terminalErr)
+	var inboxErr *terminalInboxError
+	return errors.As(err, &terminalErr) || errors.As(err, &inboxErr)
 }
 
 func isRetryableCodexErrorNotification(err error) bool {
@@ -730,6 +735,11 @@ func (d *Daemon) selfID() string {
 }
 
 func (d *Daemon) ackMessage(ctx context.Context, message platform.Message) error {
+	if d.inboxJournal != nil {
+		if err := d.inboxJournal.Complete(message); err != nil {
+			return &terminalInboxError{err: fmt.Errorf("persist inbox completion: %w", err)}
+		}
+	}
 	ackCtx, cancel := context.WithTimeout(ctx, messageAckTimeout)
 	var err error
 	// An inbox item is acked on the inbox that delivered it; the thread ack
@@ -822,6 +832,19 @@ func (d *Daemon) ensureMCPReady(ctx context.Context) error {
 }
 
 func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
+	journal, err := d.messageJournal()
+	if err != nil {
+		return &terminalInboxError{err: err}
+	}
+	if journal != nil {
+		execute, err := journal.Begin(message)
+		if err != nil {
+			return &terminalInboxError{err: err}
+		}
+		if !execute {
+			return d.ackMessage(ctx, message)
+		}
+	}
 	switch d.sdk {
 	case SDKCodex:
 		return d.handleCodexMessage(ctx, message)
