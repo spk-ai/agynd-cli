@@ -151,6 +151,13 @@ credential-free tests.
 
 ## E2E validation
 
+Claude SDK calls can return a result with `IsError` set and no Go error (for
+example, a native API authentication failure). The daemon treats error or nil
+results as terminal processing failures: it neither publishes a final reply nor
+acknowledges the inbox, and its sync loop does not automatically retry the turn.
+The upstream error body is not included in the processing error. Reconcile
+possible side effects before retrying; an error does not prove no tools ran.
+
 The GitHub E2E workflow runs this repository's local E2E tests with:
 
 ```bash
