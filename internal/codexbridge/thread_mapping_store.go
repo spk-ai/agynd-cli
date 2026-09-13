@@ -53,8 +53,12 @@ type ThreadMappingStore struct {
 }
 
 func NewThreadMappingStore(homeDir string) *ThreadMappingStore {
+	return NewThreadMappingStoreAtDir(filepath.Join(homeDir, ".agyn", "codex", "thread-mapping"))
+}
+
+func NewThreadMappingStoreAtDir(dir string) *ThreadMappingStore {
 	return &ThreadMappingStore{
-		dir:        filepath.Join(homeDir, ".agyn", "codex", "thread-mapping"),
+		dir:        dir,
 		createTemp: os.CreateTemp,
 		rename:     os.Rename,
 	}

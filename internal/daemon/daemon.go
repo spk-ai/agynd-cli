@@ -428,7 +428,7 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 		return nil, err
 	}
 	codexHomeValue := codexHomeEnv()
-	mappingStore := codexbridge.NewThreadMappingStore(codexHomeValue)
+	mappingStore := codexMappingStore(codexHome, codexHomeValue)
 	options := []codex.Option{
 		codex.WithBinary(cfg.AgentBinary),
 		codex.WithWorkDir(cfg.WorkDir),

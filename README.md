@@ -28,6 +28,23 @@ it into the local VM, and set it as the agent's init image:
 agyn local load-image my-agent-init:dev
 ```
 
+## Persistent Codex State
+
+Set `CODEX_HOME` to an absolute path on an environment's per-instance persistent
+volume (for example `/agent-state/codex`). Codex configuration, authentication
+state and native sessions then use that directory. Agyn's instance-to-Codex
+session mappings are stored under `CODEX_HOME/agyn/thread-mapping` so a recreated
+workload can resume the same native session. `HOME` and the workspace are unchanged.
+
+Without an override, existing `HOME/.codex` state and
+`HOME/.agyn/codex/thread-mapping` mappings retain their previous locations. Setting
+`CODEX_HOME` to the default `HOME/.codex` also retains the legacy mapping path.
+This setting does not migrate old state or create a persistent volume. To move an
+existing instance, stop it first and migrate both its native state and its mapping;
+copying only a mapping cannot restore a missing native session. Do not share a
+state directory between instances, and treat it as private credential-bearing
+storage, not a transcript export directory.
+
 ## E2E validation
 
 The GitHub E2E workflow runs this repository's local E2E tests with:

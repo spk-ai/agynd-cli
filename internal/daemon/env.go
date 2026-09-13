@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,4 +29,14 @@ func codexHomeEnv() string {
 		return codexDefaultHome
 	}
 	return home
+}
+
+func codexStateHome() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
+		if !filepath.IsAbs(home) {
+			return "", fmt.Errorf("CODEX_HOME must be an absolute path")
+		}
+		return filepath.Clean(home), nil
+	}
+	return filepath.Join(codexHomeEnv(), ".codex"), nil
 }

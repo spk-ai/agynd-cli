@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// A subscription-mode codex reads ~/.codex/auth.json before it reaches the
+// A subscription-mode codex reads $CODEX_HOME/auth.json before it reaches the
 // network and refuses to start without one. In native mode the credential it
 // would hold is not the container's to have: the proxy terminates the vendor
 // connection and builds the upstream header from the resolved subscription. So
@@ -42,7 +42,11 @@ type codexAuthTokens struct {
 // An existing file is left alone. It may be a real credential from the CLI's own
 // login, and replacing that with a blank one logs the engineer out.
 func writeCodexAuth(now time.Time) error {
-	path := filepath.Join(codexHomeEnv(), ".codex", "auth.json")
+	home, err := codexStateHome()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, "auth.json")
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {

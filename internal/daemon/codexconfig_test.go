@@ -37,6 +37,7 @@ func (noopCodexClient) Close() error {
 }
 
 func TestWriteCodexConfig(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -64,6 +65,7 @@ func TestWriteCodexConfig(t *testing.T) {
 }
 
 func TestWriteCodexConfigHomeFallback(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	t.Setenv("HOME", "")
 
 	baseURL := "https://example.com"
@@ -90,6 +92,7 @@ func TestWriteCodexConfigHomeFallback(t *testing.T) {
 }
 
 func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -112,6 +115,7 @@ func TestWriteCodexConfigForZitiOmitsAPIKeyEnv(t *testing.T) {
 }
 
 func TestWriteCodexConfigWithMCPServers(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -406,6 +410,7 @@ mcp_oauth_credentials_store = "file"
 // hash. The system layer is the managed one, so a hook written anywhere else is
 // discovered, found untrusted and dropped in silence.
 func TestWriteCodexConfigRegistersTheHookWhereCodexTrustsIt(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	systemConfig := filepath.Join(t.TempDir(), "etc", "codex", "config.toml")
@@ -437,6 +442,7 @@ func TestWriteCodexConfigRegistersTheHookWhereCodexTrustsIt(t *testing.T) {
 
 // Tracing is optional: an agent whose hook cannot be registered still answers.
 func TestWriteCodexConfigSurvivesAnUnwritableSystemConfig(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 	original := codexSystemConfigPath
 	codexSystemConfigPath = filepath.Join(t.TempDir(), "file", "config.toml")

@@ -86,6 +86,7 @@ func TestAgentModePreparesStateButDefersSettings(t *testing.T) {
 // A native-mode codex gets its auth file from the CLI it is, not from anything
 // the platform relays.
 func TestPrepareWritesCodexAuthInNativeMode(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -114,6 +115,7 @@ func TestPrepareWritesCodexAuthInNativeMode(t *testing.T) {
 // Platform mode routes through the proxy by a platform model, and codex holds a
 // real platform credential -- there is no subscription to stand in for.
 func TestPrepareSkipsCodexAuthInPlatformMode(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

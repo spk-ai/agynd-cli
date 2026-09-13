@@ -11,6 +11,7 @@ import (
 )
 
 func TestWriteCodexAuthShape(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -66,6 +67,7 @@ func TestCodexPlaceholderIDTokenDecodes(t *testing.T) {
 // A real credential may already be there, from the CLI's own login or a previous
 // session, and replacing it with a blank one logs the engineer out.
 func TestWriteCodexAuthLeavesAnExistingFileAlone(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".codex", "auth.json")

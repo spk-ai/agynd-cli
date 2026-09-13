@@ -163,7 +163,10 @@ var codexProxyEnvVars = []string{
 }
 
 func writeCodexConfig(cfg config.Config) (string, error) {
-	codexHome := filepath.Join(codexHomeEnv(), ".codex")
+	codexHome, err := codexStateHome()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return "", fmt.Errorf("create codex home dir: %w", err)
 	}
