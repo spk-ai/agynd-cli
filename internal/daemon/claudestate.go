@@ -23,11 +23,13 @@ var claudeStateKeys = map[string]any{
 // the rest is left as found -- unlike a placeholder credential, which is
 // skipped outright once a file exists.
 func writeClaudeState() error {
-	home, err := os.UserHomeDir()
+	path, err := claudeStatePath()
 	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+		return err
 	}
-	path := filepath.Join(home, claudeStateFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create Claude state directory: %w", err)
+	}
 	state, err := readClaudeState(path)
 	if err != nil {
 		return err
@@ -64,7 +66,10 @@ func readClaudeState(path string) (map[string]any, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	state := map[string]any{}
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err := json.Unmarshal(data, &state); err != nil || state == nil {
+		if _, enabled := os.LookupEnv("AGYN_CLAUDE_SESSION_DIR"); enabled {
+			return nil, fmt.Errorf("invalid persistent Claude user state; reconciliation required")
+		}
 		log.Printf("%s is not a JSON object (%v); writing first-run state over it", path, err)
 		return map[string]any{}, nil
 	}
