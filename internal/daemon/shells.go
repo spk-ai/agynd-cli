@@ -81,15 +81,16 @@ var (
 // Failure is logged and not fatal. A workload whose server did not start still
 // serves ephemeral sessions, which is what every consumer that does not ask
 // for a shell already uses — so a broken multiplexer costs persistence, not
-// the terminal.
-func startShellServer(ctx context.Context) {
+// the terminal. The returned cleanup stops and joins the title worker; it
+// deliberately does not terminate the tmux server or its persistent shells.
+func startShellServer(ctx context.Context) func() {
 	if _, err := os.Stat(tmuxBinaryPath); err != nil {
 		log.Printf("shell server not started: %s unavailable: %v", tmuxBinaryPath, err)
-		return
+		return func() {}
 	}
 	if err := os.MkdirAll(tmuxSocketDir, 0o777); err != nil {
 		log.Printf("shell server not started: socket dir %s: %v", tmuxSocketDir, err)
-		return
+		return func() {}
 	}
 
 	startCtx, cancel := context.WithTimeout(ctx, tmuxStartTimeout)
@@ -99,11 +100,20 @@ func startShellServer(ctx context.Context) {
 	cmd.Env = shellServerEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("shell server not started: %v: %s", err, strings.TrimSpace(string(out)))
-		return
+		return func() {}
 	}
 	log.Printf("shell server started on socket %q", tmuxSocketName)
 
-	go refreshShellTitles(ctx)
+	refreshCtx, cancelRefresh := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refreshShellTitles(refreshCtx)
+	}()
+	return func() {
+		cancelRefresh()
+		<-done
+	}
 }
 
 // refreshShellTitles keeps what each shell announces about itself current.

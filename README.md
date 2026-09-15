@@ -6,6 +6,33 @@ the agent process lifecycle.
 
 Architecture: https://github.com/agynio/architecture/blob/main/architecture/agynd-cli.md
 
+## Shell Title Worker Lifetime
+
+The focused `fix/shell-title-worker-lifetime` contribution is based on upstream
+`495920a`. Shell startup returns an idempotent cancel-and-wait cleanup for its
+title refresher, and `Daemon.Run` defers that cleanup. It does not terminate tmux
+or its persistent sessions. Missing binaries and failed startup remain nonfatal.
+
+The unchanged repeated shell test reproduced races between the background worker
+and restored test paths. Tests now join the worker before restoring dependencies
+and check explicit stop, parent cancellation, startup failure and an in-flight
+refresh that must finish before cleanup returns. No timing globals are changed.
+
+On 2026-09-15, 100 repeated focused race entries and all 383 upstream full race
+entries pass with no failures or skips. Build and unfiltered vet also pass:
+
+```sh
+env -u CODEX_HOME go test -race ./internal/daemon \
+  -run 'Test(StartShellServer|ShellServerEnv)' -count=10 -timeout=2m
+env -u CODEX_HOME go test -race ./... -count=1 -timeout=3m
+go build ./...
+go vet ./...
+```
+
+Use the upstream generated API set. No API, provider, session-storage or runtime
+image change is part of this patch. Source acceptance does not claim a deployed
+image upgrade or overall production readiness; repository licensing is unchanged.
+
 ## Local Development
 
 Full setup: https://github.com/agynio/architecture/blob/main/architecture/operations/local-development.md

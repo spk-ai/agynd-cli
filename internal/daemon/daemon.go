@@ -495,7 +495,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Before either mode. A sandbox is the workload persistent shells exist
 	// for, but the server is cheap and the alternative is a second place where
 	// a shell's environment could differ.
-	startShellServer(ctx)
+	stopTitleRefresh := startShellServer(ctx)
+	defer stopTitleRefresh()
 
 	if d.sdk == config.ModeHolder {
 		return runHolder(ctx, d.agents, d.cfg.EnvironmentID, d.cfg.WorkDir)
