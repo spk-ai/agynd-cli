@@ -8,6 +8,13 @@ Architecture: https://github.com/agynio/architecture/blob/main/architecture/agyn
 
 ## Shell Title Worker Lifetime
 
+The `lab/claude-shell-worker-integration` source (`0497e02`) combines this fix
+with local integration `a874280`, retaining the existing Codex/Claude persistence,
+inbox and DNS changes. Ordinary and unfiltered full race suites pass 458 entries
+each, with the two opt-in native tests (`TestClaudeDiagnosticNative401` and
+`TestNativeDNSInterception`) skipped. Build and unfiltered vet pass. No runtime
+init image is rebuilt or deployed by this source acceptance.
+
 The focused `fix/shell-title-worker-lifetime` contribution is based on upstream
 `495920a`. Shell startup returns an idempotent cancel-and-wait cleanup for its
 title refresher, and `Daemon.Run` defers that cleanup. It does not terminate tmux
