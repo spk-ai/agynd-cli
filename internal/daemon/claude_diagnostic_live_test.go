@@ -70,6 +70,7 @@ func TestClaudeDiagnosticNative401(t *testing.T) {
 			t.Logf("local message request: parsed=%t streaming=%t", parsed, request.Stream)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Suppress CLI retry backoff to isolate terminal error propagation.
 		w.Header().Set("x-should-retry", "false")
 		w.Header().Set("request-id", "diagnostic-fixture")
 		w.WriteHeader(http.StatusUnauthorized)

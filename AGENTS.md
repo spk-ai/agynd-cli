@@ -2,9 +2,8 @@
 
 ## Living Documentation
 
-- Keep implemented contracts beside their owning Go package, type, or function.
-  Document state ownership, persistence, ordering, failure/retry policy, and
-  compatibility limits; update those comments with the code and its tests.
+- Keep non-obvious contracts and rationale beside the owning Go code; update
+  comments and tests with behavior changes instead of narrating the implementation.
 - Keep Markdown for setup, operations, security, cross-component coordination,
   and verification. Link to source instead of duplicating implemented behavior.
 - Maintain `docs/catalog.json` as a curated Markdown index, not a generated
@@ -21,25 +20,20 @@
   targets use repo selectors and extensionless components (for example
   `claude-sdk::options`); local targets retain their source extension and are
   repo-relative.
-- For standalone upstream use without Navigator, fall back to native Go package
-  structure, `git diff upstream/main --stat`, `rg --files`, `go list ./...`,
-  `go doc`, and targeted source/test reads. Do not require Navigator or any
-  particular workspace or absolute lab path.
+- Without Navigator, use native Go package structure and documentation, then
+  targeted source/test reads. Do not require any particular workspace or lab path.
 
 ## Verification
 
 - Use the Go version required by `go.mod` and existing generated API bindings
   under `.gen/`. Missing bindings are a prerequisite to report, not a reason for
   incidental generation or dependency changes in a documentation-only task.
-- Run focused existing tests for touched owners, for example
-  `go test -mod=readonly ./internal/claudebridge ./internal/inboxjournal ./internal/codexbridge ./internal/daemon`;
-  use `-race` for ownership, workers, and replay-sensitive changes.
-- Use a disposable `HOME` and clear inherited `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
-  `AGYN_CLAUDE_SESSION_DIR`, `AGYN_INBOX_JOURNAL_DIR`, `AGYN_INBOX_CONTROL_FILE`,
-  and `AGYN_INIT_SCRIPTS_REQUIRED`. Constructors write first-run state.
-- Leave `AGYN_NATIVE_DNS_TEST` and `AGYN_CLAUDE_DIAGNOSTIC_TEST` unset. Native CLI,
-  provider, cluster, credential, and `-tags e2e` fixtures need separate explicit
+- For behavior changes, select focused existing tests and run
+  `go test -mod=readonly <packages>`; add `-race` for ownership and lifecycle work.
+- Use a disposable `HOME` and an allowlisted environment without inherited
+  CLI state, initialization, inbox, authentication, or live-fixture overrides.
+  Native CLI, provider, cluster, and E2E fixtures need separate explicit
   authorization; never enable them for ordinary local verification.
 - Run `gofmt` on edited Go files and `git diff --check`. For documentation-only
-  work, verify source tokens/AST are unchanged apart from comments; leave
+  work, compare source tokens and build/tool directives with the base; leave
   `go.mod`, `go.sum`, and generated output untouched. Report tests and skips.
