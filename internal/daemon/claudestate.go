@@ -18,10 +18,9 @@ var claudeStateKeys = map[string]any{
 	"installMethod":          "native",
 }
 
-// writeClaudeState merges the first-run keys into ~/.claude.json. The file is
-// the CLI's own state and accumulates across runs, so absent keys are set and
-// the rest is left as found -- unlike a placeholder credential, which is
-// skipped outright once a file exists.
+// writeClaudeState fills absent first-run keys at claudeStatePath, preserving
+// existing values and unrelated CLI state. Malformed persistent state is an
+// error, not permission to reset the conversation's user state.
 func writeClaudeState() error {
 	path, err := claudeStatePath()
 	if err != nil {
@@ -55,8 +54,9 @@ func writeClaudeState() error {
 	return nil
 }
 
-// Unreadable state starts over rather than failing: the CLI rewrites this file
-// itself, and refusing to start over it would strand every workload.
+// readClaudeState treats a missing file as fresh state. Malformed JSON or a
+// non-object is preserved and rejected when AGYN_CLAUDE_SESSION_DIR is present;
+// otherwise it is reset for legacy startup. Other read errors always propagate.
 func readClaudeState(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

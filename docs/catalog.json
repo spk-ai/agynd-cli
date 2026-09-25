@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "operations",
+      "path": "README.md",
+      "title": "agynd",
+      "purpose": "Local setup, durable-state operations, coordinator boundaries, and acceptance verification.",
+      "kind": "operations"
+    },
+    {
+      "id": "contribution",
+      "path": "AGENTS.md",
+      "title": "Repository Guidance",
+      "purpose": "Source-adjacent Go documentation, structural navigation, and local test discipline.",
+      "kind": "contribution"
+    },
+    {
+      "id": "changelog",
+      "path": "CHANGELOG.md",
+      "title": "Changelog",
+      "purpose": "Release notes and links to earlier releases; not the current implementation contract.",
+      "kind": "historical"
+    }
+  ]
+}

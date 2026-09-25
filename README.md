@@ -31,28 +31,21 @@ agyn local load-image my-agent-init:dev
 ## Persistent Codex State
 
 Set `CODEX_HOME` to an absolute path on an environment's per-instance persistent
-volume (for example `/agent-state/codex`). Codex configuration, authentication
-state and native sessions then use that directory. Agyn's instance-to-Codex
-session mappings are stored under `CODEX_HOME/agyn/thread-mapping` so a recreated
-workload can resume the same native session. `HOME` and the workspace are unchanged.
+volume (for example `/agent-state/codex`). State-root and legacy mapping-path
+contracts live in [env.go](internal/daemon/env.go) and
+[codexstate.go](internal/daemon/codexstate.go).
 
-Without an override, existing `HOME/.codex` state and
-`HOME/.agyn/codex/thread-mapping` mappings retain their previous locations. Setting
-`CODEX_HOME` to the default `HOME/.codex` also retains the legacy mapping path.
-This setting does not migrate old state or create a persistent volume. To move an
-existing instance, stop it first and migrate both its native state and its mapping;
-copying only a mapping cannot restore a missing native session. Do not share a
-state directory between instances, and treat it as private credential-bearing
+Provision storage separately. To move an existing instance, stop it first and
+migrate both its native state and its mapping; copying only a mapping cannot
+restore a missing native session. Do not share a state directory between
+instances, and treat it as private credential-bearing
 storage, not a transcript export directory.
 
 ## Required Initialization
 
 Set `AGYN_INIT_SCRIPTS_REQUIRED=true` in an operator-managed environment when
-initialization is a prerequisite for agent execution. A nonzero environment or
-agent init-script exit then aborts daemon setup before the agent CLI starts;
-later scripts do not run. Invalid boolean values also abort setup. With the
-variable unset or false, nonzero exits retain their existing log-and-continue
-behavior. Context cancellation always aborts setup, in either mode.
+initialization is a prerequisite for agent execution. Ordering, boolean parsing,
+and failure policy live in [init_scripts.go](internal/daemon/init_scripts.go).
 
 This does not authenticate scripts or make agent execution exactly once. Use
 trusted scripts, bounded startup checks and durable execution reconciliation.
@@ -60,15 +53,10 @@ trusted scripts, bounded startup checks and durable execution reconciliation.
 ## Durable inbox guard (opt-in)
 
 Set `AGYN_INBOX_JOURNAL_DIR` to a private, daemon-owned directory on durable
-instance storage to disable automatic replay of ambiguous agent turns. The
-journal is shared by all SDK bridges; unset preserves the existing behavior.
-It requires instance inbox items, not the legacy thread-ack path.
-
-Intent is fsynced before invoking the agent. Completion is persisted before the
-inbox ACK, so an ACK retry does not rerun the agent or republish its final reply.
-A pending record after an agent error or process replacement stops processing
-with a reconciliation error. It does not infer whether tools already succeeded.
-Corrupt, missing-required, mismatched or unsafe state fails closed.
+instance storage to guard against replay of ambiguous agent turns. The record
+and coordinator-control contracts live in
+[inboxjournal](internal/inboxjournal/journal.go); SDK dispatch and ACK ordering
+are owned by [daemon.go](internal/daemon/daemon.go).
 
 A coordinator can also set `AGYN_INBOX_CONTROL_FILE` to an absolute path to a
 private JSON file installed before inbox consumption:
@@ -82,16 +70,11 @@ private JSON file installed before inbox consumption:
 }
 ```
 
-Only the allowed message may execute. Listed retired messages are durably
-marked `ack_only` and acknowledged as the instance, without running an agent.
-This is a discard decision, not proof that an interrupted turn completed. All
-other inbox messages stop processing. Control requires the durable journal.
-
 The coordinator must stop and verify removal of the previous workload before
 authorizing a new one, and audit explicit reconciliation of ambiguous work.
 Never build the control file from model output or silently retire an unknown
-request. The journal stores identity and content hashes, not message bodies.
-Keep it for the lifetime of the instance; deleting it removes replay protection.
+request. Retiring a message is a discard decision, not proof of completion.
+Keep the journal for the instance lifetime; deleting it removes replay protection.
 External side effects still require their own idempotency or human review.
 Neither a writable journal nor root-run agents provide a security boundary.
 
@@ -106,26 +89,15 @@ AGYN_CLAUDE_SESSION_DIR=/workspace/.agyn/claude-session
 
 These must be separate, private, absolute paths on the instance's own durable
 filesystem. Keep the agent ID, instance ID and working directory unchanged on
-replacement. The daemon creates both directories with mode `0700`; do not
-precreate the `claude-session` leaf or reuse it for another instance. Mount the
-parent workspace, not that leaf. Existing native history without a mapping
-requires explicit migration and is not adopted automatically.
+replacement. Do not precreate the `claude-session` leaf or reuse it for another
+instance. Mount the parent workspace, not that leaf. Existing native history
+without a mapping requires explicit migration and is not adopted automatically.
 
-Before starting the CLI, the daemon durably reserves a UUID and binds it to the
-agent, instance, workspace and native state location. It holds an exclusive
-nonblocking filesystem lock while it owns that session. On replacement it
-verifies the binding and the native transcript's session/workspace metadata,
-then passes the exact transcript path to the SDK's `Resume` option. A new
-session uses `SessionID`. Settings, user state and skills honor
-`CLAUDE_CONFIG_DIR`, so an ephemeral `HOME` does not change their location.
-
-Missing, corrupt, ambiguous or mismatched state stops startup; it never silently
-creates a replacement conversation. This includes a reserved UUID with no
-native transcript after an interrupted first startup. A mismatched turn result
-stops processing before publishing the reply or acknowledging the inbox.
-Malformed persistent user state is preserved for reconciliation instead of
-being reset. Holder mode cannot use this option. With the session-directory
-variable unset, existing session-selection behavior is unchanged.
+Binding, lock ownership, and transcript validation are documented in
+[claudebridge](internal/claudebridge/session.go). Environment selection lives in
+[claudesession.go](internal/daemon/claudesession.go), user-state preservation in
+[claudestate.go](internal/daemon/claudestate.go), and SDK selection/result checks
+in [claude.go](internal/daemon/claude.go).
 
 This is completed-turn continuity, not permission to replay interrupted work.
 The execution coordinator must reconcile possible side effects and fence old
@@ -144,25 +116,17 @@ go test ./internal/claudebridge ./internal/daemon
 go test -race ./internal/claudebridge ./internal/daemon -run 'Session|Claude|Skills'
 ```
 
-Run daemon tests with an isolated `HOME` and without inherited `CODEX_HOME`,
-`CLAUDE_CONFIG_DIR` or `AGYN_CLAUDE_SESSION_DIR`; existing constructor tests write
-first-run CLI state. Native CLI and Agyn/Pod acceptance are separate from these
-credential-free tests.
+Run daemon tests with an isolated `HOME` and no inherited state, journal, init,
+or live-test overrides; see [AGENTS.md](AGENTS.md) for local test discipline.
+Existing constructor tests write first-run CLI state. Native CLI and Agyn/Pod
+acceptance are separate from these credential-free tests.
 
 ## E2E validation
 
-Claude SDK calls can return a result with `IsError` set and no Go error (for
-example, a native API authentication failure). The daemon treats error or nil
-results as terminal processing failures: it neither publishes a final reply nor
-acknowledges the inbox, and its sync loop does not automatically retry the turn.
-The upstream error body is not included in the processing error. Reconcile
-possible side effects before retrying; an error does not prove no tools ran.
-
-Failed-result errors now include allowlisted result subtype/terminal reason and
-an HTTP error status from 400 through 599 when reported by the CLI. Unknown or
-unsafe strings become `unknown`; absent/invalid status becomes `0`. Response
-bodies, arbitrary stop reasons and native session identifiers are not included.
-`IsError` remains authoritative even when the result subtype is `success`.
+Claude failure handling and safe diagnostic fields are documented beside
+`handleClaudeMessage` and `claudeTurnFailure` in
+[claude.go](internal/daemon/claude.go). Reconcile possible side effects before
+retrying; an error does not prove no tools ran.
 
 The independently reviewable diagnostic change is stacked on
 `fix/claude-error-results`. This `lab/claude-diagnostics-integration` branch

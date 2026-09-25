@@ -16,6 +16,12 @@ import (
 
 var errClaudeTurnFailed = errors.New("Claude returned an error result; reconciliation required")
 
+// newClaudeDaemon starts the CLI after init scripts, selecting either the reserved
+// SessionID or the verified transcript via Resume. It never falls back to a new
+// conversation if persistent selection fails.
+//
+// @see claude-sdk::options
+// @see internal/claudebridge/session.go
 func newClaudeDaemon(ctx context.Context, cfg config.Config, version string, session *claudebridge.Session) (*Daemon, error) {
 	// version is unused: the Claude SDK has no client-info metadata.
 	_ = version
@@ -135,6 +141,11 @@ func (d *Daemon) ensureClaudeReady(ctx context.Context) error {
 	return nil
 }
 
+// handleClaudeMessage rejects nil/error results and persistent session mismatches
+// before reply publication or inbox ACK. IsError is authoritative even with a
+// success subtype and no Go error; these failures are terminal in Run's sync loop.
+//
+// @see claude-sdk::client
 func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Message) error {
 	threadID := strings.TrimSpace(message.ThreadID)
 	if threadID == "" {
@@ -171,11 +182,13 @@ func (d *Daemon) handleClaudeMessage(ctx context.Context, message platform.Messa
 	return nil
 }
 
+// claudeTurnFailure exposes only allowlisted subtype/reason and HTTP status
+// 400..599, defaulting to unknown/0. Response bodies, arbitrary stop reasons, and
+// native session identifiers must not enter this diagnostic.
 func claudeTurnFailure(result *claude.TurnResult) error {
 	if result == nil {
 		return errClaudeTurnFailed
 	}
-	// CLI strings may contain upstream content. Only known metadata is logged.
 	subtype, reason, status := "unknown", "unknown", 0
 	switch result.Subtype {
 	case "success", "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries":

@@ -14,6 +14,7 @@ const (
 	threadMappingFileMode = 0o600
 )
 
+// ThreadMappingRecord binds an instance to a native Codex thread, not its history.
 type ThreadMappingRecord struct {
 	InstanceID       string `json:"instance_id"`
 	CodexThreadID    string `json:"codex_thread_id"`
@@ -46,16 +47,20 @@ func (r ThreadMappingRecord) validate() error {
 	return nil
 }
 
+// ThreadMappingStore persists instance mappings separately from native history.
 type ThreadMappingStore struct {
 	dir        string
 	createTemp func(dir, pattern string) (*os.File, error)
 	rename     func(oldpath, newpath string) error
 }
 
+// NewThreadMappingStore selects the legacy HOME/.agyn/codex/thread-mapping path.
 func NewThreadMappingStore(homeDir string) *ThreadMappingStore {
 	return NewThreadMappingStoreAtDir(filepath.Join(homeDir, ".agyn", "codex", "thread-mapping"))
 }
 
+// NewThreadMappingStoreAtDir selects an explicit mapping directory. Load and Save
+// require an absolute path; construction neither creates nor migrates state.
 func NewThreadMappingStoreAtDir(dir string) *ThreadMappingStore {
 	return &ThreadMappingStore{
 		dir:        dir,

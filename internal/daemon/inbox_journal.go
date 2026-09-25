@@ -12,6 +12,9 @@ type terminalInboxError struct{ err error }
 func (e *terminalInboxError) Error() string { return e.err.Error() }
 func (e *terminalInboxError) Unwrap() error { return e.err }
 
+// messageJournal lazily loads the shared SDK guard and its coordinator control
+// once for the serial message loop. Empty AGYN_INBOX_JOURNAL_DIR disables it;
+// AGYN_INBOX_CONTROL_FILE without a journal is an error, never a bypass.
 func (d *Daemon) messageJournal() (*inboxjournal.Journal, error) {
 	if d.inboxJournalReady {
 		return d.inboxJournal, nil

@@ -1,4 +1,6 @@
 // Package claudebridge owns durable native Claude session selection.
+// It binds one instance to one conversation; interrupted tool work still needs
+// coordinator reconciliation before another workload may use that conversation.
 package claudebridge
 
 import (
@@ -15,6 +17,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// Binding is the immutable identity checked on every reopen. IDs must be
+// canonical nonzero UUIDs; WorkDir and StateDir must be clean absolute paths.
 type Binding struct {
 	AgentID    string `json:"agent_id"`
 	InstanceID string `json:"instance_id"`
@@ -31,7 +35,9 @@ type record struct {
 // Session holds an exclusive daemon lock until Close. This does not fence
 // escaped subprocesses or a failed node; the workload coordinator must do that.
 type Session struct {
-	ID         string
+	// ID is durably reserved before the first CLI invocation.
+	ID string
+	// Transcript is the verified exact resume path, or empty for a new session.
 	Transcript string
 	lock       *os.File
 	closeOnce  sync.Once
@@ -40,7 +46,11 @@ type Session struct {
 
 // Open allocates an identity before the first CLI invocation or selects its
 // exact existing transcript. It never replaces missing or ambiguous state.
-// directory and StateDir must be separate private per-instance durable paths.
+// directory and StateDir must be separate private per-instance durable paths;
+// directory must not be precreated for a new session. A nonblocking lock excludes
+// another daemon owner. Reopening requires the same Binding and one transcript
+// with matching session/workspace metadata, even after an unused reservation.
+// Native history without a mapping requires explicit migration, not adoption.
 func Open(directory string, expected Binding) (_ *Session, err error) {
 	if !validPath(directory) || !validPath(expected.StateDir) || !validPath(expected.WorkDir) ||
 		!validID(expected.InstanceID) || !validID(expected.AgentID) {
@@ -171,6 +181,8 @@ func Open(directory string, expected Binding) (_ *Session, err error) {
 	return session, nil
 }
 
+// Close releases the advisory lock once without deleting the binding or history.
+// The caller must stop the CLI before releasing ownership.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() { s.closeErr = s.lock.Close() })
 	return s.closeErr

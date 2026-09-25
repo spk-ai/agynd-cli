@@ -29,6 +29,10 @@ type initScript struct {
 	Description string
 }
 
+// runInitScripts gates managed CLI startup on ordered environment and agent
+// scripts. AGYN_INIT_SCRIPTS_REQUIRED uses strconv.ParseBool; blank means false
+// and invalid values fail before fetching scripts. Required failures stop later
+// scripts; holder mode uses the same policy for environment scripts only.
 func runInitScripts(ctx context.Context, client initScriptsClient, agentID string, environmentID string, workDir string) error {
 	required := false
 	if value := strings.TrimSpace(os.Getenv("AGYN_INIT_SCRIPTS_REQUIRED")); value != "" {
@@ -143,6 +147,9 @@ func initScriptFromProto(script *agentsv1.InitScript) (initScript, error) {
 	}, nil
 }
 
+// executeInitScript runs /bin/sh -lc with inherited environment and output.
+// Only a nonzero process exit is optional: it is logged and ignored unless
+// required. Cancellation and process-start failures always abort initialization.
 func executeInitScript(ctx context.Context, script initScript, workDir string, required bool) error {
 	logInitScriptStart(script)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script.Script)

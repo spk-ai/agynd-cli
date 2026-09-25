@@ -107,6 +107,8 @@ func startShellServer(ctx context.Context) {
 }
 
 // refreshShellTitles keeps what each shell announces about itself current.
+// The worker ends on context cancellation, not when Run returns. Each tmux
+// command is timeout-bounded; refresh failures do not terminate the worker.
 //
 // Without it a tab names the directory the shell was in when something last
 // redrew it, which is not the same as the directory the shell is in.

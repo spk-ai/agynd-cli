@@ -16,6 +16,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// Control is a trusted coordinator's version-1 authorization for one instance.
+// Only AllowedMessageID may execute; AckOnlyMessageIDs explicitly discards up to
+// 256 distinct other messages. Retirement does not assert that prior work finished.
 type Control struct {
 	Version           int      `json:"version"`
 	InstanceID        string   `json:"instance_id"`
@@ -32,6 +35,9 @@ type record struct {
 	State       string `json:"state"`
 }
 
+// Journal stores identity and content hashes, not message bodies, under an
+// instance-specific directory. Retain it for the instance lifetime and serialize
+// its use; it does not fence old workloads or secure state against the agent.
 type Journal struct {
 	directory  string
 	instanceID string
@@ -40,6 +46,9 @@ type Journal struct {
 
 // Open requires a private, durable, daemon-owned directory. Optional control is
 // supplied by a trusted coordinator before the daemon begins consuming inboxes.
+// directory must be clean and absolute; instanceID must be a canonical nonzero
+// UUID. Control is read once, must bind that instance, and requires a private
+// regular file at an absolute path. Invalid or unsafe state is rejected.
 func Open(directory, instanceID, controlPath string) (*Journal, error) {
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
 		return nil, fmt.Errorf("inbox journal directory must be absolute and clean")
@@ -83,6 +92,9 @@ func Open(directory, instanceID, controlPath string) (*Journal, error) {
 // Begin returns true only after persisting intent before any agent invocation.
 // False means acknowledge only; an ambiguous pending record is always an error
 // unless a trusted control file explicitly retires that exact message.
+// Messages require an inbox item identity, not the legacy thread-ACK path.
+// Existing records must match immutable message fields and a known state;
+// corrupt or mismatched records never authorize replay.
 func (j *Journal) Begin(message platform.Message) (bool, error) {
 	expected, err := j.expected(message)
 	if err != nil {

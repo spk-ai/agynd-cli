@@ -1,3 +1,6 @@
+// Package daemon prepares agent CLI state and owns workload startup, SDK clients,
+// and inbox processing. Persistent Claude selection and inbox replay protection
+// are separate opt-ins; neither makes external side effects exactly once.
 package daemon
 
 import (
@@ -83,6 +86,7 @@ const (
 
 const mcpProbeID = "agynd-mcp-ready"
 
+// Daemon owns a workload's CLI client, platform connections, and recovery state.
 type Daemon struct {
 	cfg             config.Config
 	sdk             string
@@ -159,6 +163,9 @@ type platformSetup struct {
 	skills        []skill
 }
 
+// New prepares CLI state and constructs an agent or holder daemon. Persistent
+// Claude ownership is acquired before state preparation and released if setup
+// fails. In agent mode, init scripts run before the SDK starts the CLI.
 func New(ctx context.Context, cfg config.Config, version string) (*Daemon, error) {
 	var session *claudebridge.Session
 	if cfg.SDK == SDKClaude {
@@ -495,6 +502,9 @@ func newCodexDaemon(ctx context.Context, cfg config.Config, version string) (*Da
 	}, nil
 }
 
+// Close releases clients and platform resources. Persistent Claude ownership is
+// released only after its client closes successfully; a failed close retains the
+// lock until process exit. Background workers require cancellation of Run's context.
 func (d *Daemon) Close() {
 	if d.codex != nil {
 		_ = d.codex.Close()
@@ -524,6 +534,9 @@ func (d *Daemon) Close() {
 	}
 }
 
+// Run starts the best-effort shell service, then consumes inboxes or waits in
+// holder mode. Terminal turn, session, and journal failures return without retry;
+// other sync errors use backoff. Callers must cancel ctx on return to stop workers.
 func (d *Daemon) Run(ctx context.Context) error {
 	// Before either mode. A sandbox is the workload persistent shells exist
 	// for, but the server is cheap and the alternative is a second place where
@@ -763,6 +776,8 @@ func (d *Daemon) selfID() string {
 	return d.cfg.AgentID.String()
 }
 
+// ackMessage persists completion before the remote ACK when journaling is enabled.
+// A persistence failure is terminal; a lost ACK then needs no further agent turn.
 func (d *Daemon) ackMessage(ctx context.Context, message platform.Message) error {
 	if d.inboxJournal != nil {
 		if err := d.inboxJournal.Complete(message); err != nil {
@@ -860,6 +875,9 @@ func (d *Daemon) ensureMCPReady(ctx context.Context) error {
 	return nil
 }
 
+// handleMessage applies the durable guard before dispatching to any SDK. A
+// completed or explicitly retired message takes only the ACK path; journal errors
+// stop processing so an ambiguous prior attempt cannot silently run again.
 func (d *Daemon) handleMessage(ctx context.Context, message platform.Message) error {
 	journal, err := d.messageJournal()
 	if err != nil {

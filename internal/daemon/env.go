@@ -31,6 +31,9 @@ func codexHomeEnv() string {
 	return home
 }
 
+// codexStateHome resolves configuration, auth, and native session storage without
+// changing HOME or the work directory. A nonblank CODEX_HOME must be absolute;
+// otherwise storage stays under HOME/.codex (or /tmp/.codex when HOME is blank).
 func codexStateHome() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
 		if !filepath.IsAbs(home) {

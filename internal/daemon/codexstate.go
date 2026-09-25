@@ -6,8 +6,10 @@ import (
 	"github.com/agynio/agynd-cli/internal/codexbridge"
 )
 
+// codexMappingStore keeps HOME/.agyn/codex/thread-mapping when the resolved state
+// home is HOME/.codex, even for an explicit override to that default. Relocated
+// state uses CODEX_HOME/agyn/thread-mapping; this selects a path, not a migration.
 func codexMappingStore(codexHome, home string) *codexbridge.ThreadMappingStore {
-	// Keep legacy mappings discoverable when no state relocation was requested.
 	if filepath.Clean(codexHome) == filepath.Join(home, ".codex") {
 		return codexbridge.NewThreadMappingStore(home)
 	}
