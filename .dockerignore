@@ -1,0 +1,4 @@
+.git/
+.gen/
+.tmp-e2e/
+.agn-cli/
