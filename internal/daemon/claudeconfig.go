@@ -17,7 +17,6 @@ type claudeSettings struct {
 	SkipDangerousModePermissionPrompt bool                       `json:"skipDangerousModePermissionPrompt"`
 	Theme                             string                     `json:"theme"`
 	Env                               map[string]string          `json:"env"`
-	MCPServers                        map[string]claudeMCPServer `json:"mcpServers,omitempty"`
 	Hooks                             map[string][]claudeMatcher `json:"hooks,omitempty"`
 }
 
@@ -55,12 +54,12 @@ type claudeMCPServer struct {
 	URL  string `json:"url"`
 }
 
-// writeClaudeSettings writes ~/.claude/settings.json. In native mode the
-// endpoint and credential keys are omitted -- the CLI addresses its vendor
-// directly and the placeholder credential comes from the container spec -- but
-// the file is still written, because permissions and mcpServers live in the
-// same document and dropping them would restore interactive tool approval and
-// take the environment's MCP wiring with it.
+// writeClaudeSettings writes ~/.claude/settings.json and declares the
+// environment's MCP servers in the CLI's user state (declareClaudeMCPServers).
+// In native mode the endpoint and credential keys are omitted -- the CLI
+// addresses its vendor directly and the placeholder credential comes from the
+// container spec -- but the file is still written, because dropping it would
+// restore interactive tool approval.
 func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServer, native bool) error {
 	claudeDir, err := claudeConfigDir()
 	if err != nil {
@@ -105,15 +104,6 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 		settings.Env["ANTHROPIC_BASE_URL"] = llmBaseURL
 		settings.Env["ANTHROPIC_API_KEY"] = apiKey
 	}
-	if len(mcpServers) > 0 {
-		settings.MCPServers = make(map[string]claudeMCPServer, len(mcpServers))
-		for _, server := range mcpServers {
-			settings.MCPServers[server.Name] = claudeMCPServer{
-				Type: "http",
-				URL:  mcpEndpoint(server.Port),
-			}
-		}
-	}
 	payload, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal claude settings: %w", err)
@@ -121,6 +111,56 @@ func writeClaudeSettings(llmBaseURL, apiKey string, mcpServers []config.MCPServe
 	settingsPath := filepath.Join(claudeDir, "settings.json")
 	if err := os.WriteFile(settingsPath, payload, 0o600); err != nil {
 		return fmt.Errorf("write claude settings: %w", err)
+	}
+	return declareClaudeMCPServers(mcpServers)
+}
+
+// declareClaudeMCPServers merges the environment's MCP servers into the
+// mcpServers object of the CLI's user state (claudeStatePath), the user scope
+// Claude Code reads MCP servers from. Claude Code 2.1 ignores mcpServers in
+// settings.json, so a declaration there registered no tools.
+//
+// The platform owns only the names it configures: an entry of the same name is
+// replaced with the loopback endpoint, and every other entry is kept -- servers
+// an init script installs (execution reporting), servers a workspace entrypoint
+// declared first in the same shape, and the user's own. Without servers the
+// file is left untouched. A non-object mcpServers is an error rather than
+// something to overwrite.
+//
+// It runs before init scripts and the CLI, which reads the file only at start.
+func declareClaudeMCPServers(servers []config.MCPServer) error {
+	if len(servers) == 0 {
+		return nil
+	}
+	path, err := claudeStatePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create Claude state directory: %w", err)
+	}
+	state, err := readClaudeState(path)
+	if err != nil {
+		return err
+	}
+	declared := map[string]any{}
+	if existing, ok := state["mcpServers"]; ok && existing != nil {
+		object, isObject := existing.(map[string]any)
+		if !isObject {
+			return fmt.Errorf("mcpServers in %s is not a JSON object", path)
+		}
+		declared = object
+	}
+	for _, server := range servers {
+		declared[server.Name] = claudeMCPServer{Type: "http", URL: mcpEndpoint(server.Port)}
+	}
+	state["mcpServers"] = declared
+	payload, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal claude state: %w", err)
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }

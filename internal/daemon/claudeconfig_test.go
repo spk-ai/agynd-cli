@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/agynio/agynd-cli/internal/config"
@@ -66,67 +67,135 @@ func TestWriteClaudeSettings(t *testing.T) {
 	}
 }
 
-func TestWriteClaudeSettingsWithMCPServers(t *testing.T) {
+// Claude Code 2.1 reads user-scoped MCP servers from its state file and ignores
+// mcpServers in settings.json, where a declaration registered no tools.
+func TestWriteClaudeSettingsDeclaresMCPServersInUserState(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	baseURL := "https://example.com"
-	apiKey := "test-api-key"
 	mcpServers := []config.MCPServer{
 		{Name: "memory", Port: 8100},
 		{Name: "cache", Port: 8200},
 	}
-	if err := writeClaudeSettings(baseURL, apiKey, mcpServers, false); err != nil {
+	if err := writeClaudeSettings("https://example.com", "test-api-key", mcpServers, false); err != nil {
 		t.Fatalf("expected settings to be written, got %v", err)
 	}
 
-	settingsPath := filepath.Join(tmpHome, ".claude", "settings.json")
-	content, err := os.ReadFile(settingsPath)
+	settings, err := os.ReadFile(filepath.Join(tmpHome, ".claude", "settings.json"))
 	if err != nil {
 		t.Fatalf("expected settings to be readable, got %v", err)
 	}
-
-	var got claudeSettings
-	if err := json.Unmarshal(content, &got); err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal(settings, &raw); err != nil {
 		t.Fatalf("expected settings to parse, got %v", err)
 	}
-
-	expected := claudeSettings{
-		Hooks: traceHooks(),
-		Permissions: claudePermissions{
-			DefaultMode: "bypassPermissions",
-			Allow: []string{
-				"Bash",
-				"Read",
-				"Write",
-				"Edit",
-				"MultiEdit",
-				"WebFetch",
-				"WebSearch",
-				"Grep",
-				"Glob",
-				"LS",
-				"Task",
-				"TodoWrite",
-				"NotebookEdit",
-			},
-			Deny: []string{},
-		},
-		SkipDangerousModePermissionPrompt: true,
-		Theme:                             "dark",
-		Env: map[string]string{
-			"ANTHROPIC_BASE_URL":                       baseURL,
-			"ANTHROPIC_API_KEY":                        apiKey,
-			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-			"DISABLE_AUTOUPDATER":                      "1",
-		},
-		MCPServers: map[string]claudeMCPServer{
-			"memory": {Type: "http", URL: "http://127.0.0.1:8100/mcp"},
-			"cache":  {Type: "http", URL: "http://127.0.0.1:8200/mcp"},
-		},
+	if _, ok := raw["mcpServers"]; ok {
+		t.Fatalf("settings.json still declares mcpServers: %s", settings)
 	}
-	if !reflect.DeepEqual(got, expected) {
-		t.Fatalf("expected settings %#v, got %#v", expected, got)
+
+	want := map[string]any{
+		"memory": map[string]any{"type": "http", "url": "http://127.0.0.1:8100/mcp"},
+		"cache":  map[string]any{"type": "http", "url": "http://127.0.0.1:8200/mcp"},
+	}
+	if got := readState(t, tmpHome)["mcpServers"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("mcpServers = %#v, want %#v", got, want)
+	}
+}
+
+// Servers an init script installed (execution reporting), entries a workspace
+// entrypoint declared first in the same shape, and unrelated CLI state all
+// survive; only the platform's own names are replaced.
+func TestDeclareClaudeMCPServersMergesIntoExistingUserState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	existing := `{
+  "numStartups": 3,
+  "hasCompletedOnboarding": true,
+  "mcpServers": {
+    "execution_reporting": {"type": "stdio", "command": "/agyn/bin/node", "args": ["/run/agyn-execution/runtime.mjs", "mcp", "/run/agyn-execution"]},
+    "qa_browser": {"type": "http", "url": "http://127.0.0.1:9100/mcp"},
+    "files": {"type": "http", "url": "http://127.0.0.1:1/stale"}
+  }
+}`
+	if err := os.WriteFile(filepath.Join(home, claudeStateFileName), []byte(existing), 0o600); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	servers := []config.MCPServer{{Name: "qa_browser", Port: 9100}, {Name: "files", Port: 9200}}
+	if err := declareClaudeMCPServers(servers); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+
+	state := readState(t, home)
+	if state["numStartups"] != float64(3) || state["hasCompletedOnboarding"] != true {
+		t.Fatalf("unrelated user state lost: %v", state)
+	}
+	want := map[string]any{
+		"execution_reporting": map[string]any{"type": "stdio", "command": "/agyn/bin/node",
+			"args": []any{"/run/agyn-execution/runtime.mjs", "mcp", "/run/agyn-execution"}},
+		"qa_browser": map[string]any{"type": "http", "url": "http://127.0.0.1:9100/mcp"},
+		"files":      map[string]any{"type": "http", "url": "http://127.0.0.1:9200/mcp"},
+	}
+	if got := state["mcpServers"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("mcpServers = %#v, want %#v", got, want)
+	}
+	info, err := os.Stat(filepath.Join(home, claudeStateFileName))
+	if err != nil {
+		t.Fatalf("stat state: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("state mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+// With CLAUDE_CONFIG_DIR set the CLI reads its user state there, not in HOME.
+func TestDeclareClaudeMCPServersFollowsClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(t.TempDir(), "claude")
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+
+	if err := declareClaudeMCPServers([]config.MCPServer{{Name: "memory", Port: 8100}}); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, claudeStateFileName)); !os.IsNotExist(err) {
+		t.Fatalf("declared into HOME despite CLAUDE_CONFIG_DIR: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, claudeStateFileName))
+	if err != nil {
+		t.Fatalf("read relocated state: %v", err)
+	}
+	if !strings.Contains(string(data), `"url": "http://127.0.0.1:8100/mcp"`) {
+		t.Fatalf("relocated state lacks the server: %s", data)
+	}
+}
+
+func TestDeclareClaudeMCPServersWithoutServersLeavesStateAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := declareClaudeMCPServers(nil); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, claudeStateFileName)); !os.IsNotExist(err) {
+		t.Fatalf("state written without servers: %v", err)
+	}
+}
+
+func TestDeclareClaudeMCPServersRejectsNonObjectServers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	existing := `{"mcpServers":["not","an","object"]}`
+	path := filepath.Join(home, claudeStateFileName)
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	if err := declareClaudeMCPServers([]config.MCPServer{{Name: "memory", Port: 8100}}); err == nil {
+		t.Fatal("expected a non-object mcpServers to be rejected")
+	}
+	if data, _ := os.ReadFile(path); string(data) != existing {
+		t.Fatalf("rejected state was rewritten: %s", data)
 	}
 }
 

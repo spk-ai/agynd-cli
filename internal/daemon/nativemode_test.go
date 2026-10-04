@@ -38,8 +38,9 @@ func TestWriteClaudeSettingsNativeOmitsEndpoint(t *testing.T) {
 	if settings.Permissions.DefaultMode != "bypassPermissions" {
 		t.Fatalf("native settings lost permissions: %+v", settings.Permissions)
 	}
-	if _, ok := settings.MCPServers["platform"]; !ok {
-		t.Fatalf("native settings lost MCP wiring: %+v", settings.MCPServers)
+	declared, _ := readState(t, home)["mcpServers"].(map[string]any)
+	if _, ok := declared["platform"]; !ok {
+		t.Fatalf("native mode lost MCP wiring: %+v", declared)
 	}
 	// Neither is endpoint configuration, and an autoupdate check in native mode
 	// reaches a host nothing intercepts.

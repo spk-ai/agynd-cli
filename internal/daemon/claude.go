@@ -16,9 +16,10 @@ import (
 
 var errClaudeTurnFailed = errors.New("Claude returned an error result; reconciliation required")
 
-// newClaudeDaemon starts the CLI after init scripts, selecting either the reserved
-// SessionID or the verified transcript via Resume. It never falls back to a new
-// conversation if persistent selection fails.
+// newClaudeDaemon starts the CLI after init scripts and MCP readiness,
+// selecting either the reserved SessionID or the verified transcript via
+// Resume. It never falls back to a new conversation if persistent selection
+// fails.
 //
 // @see claude-sdk::options
 // @see internal/claudebridge/session.go
@@ -43,6 +44,14 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string, ses
 	}
 
 	if err := runInitScripts(ctx, setup.agents, cfg.AgentID.String(), cfg.EnvironmentID, cfg.WorkDir); err != nil {
+		_ = setup.gatewayConn.Close()
+		return nil, err
+	}
+
+	// Claude Code connects to its MCP servers only when it starts: a sidecar
+	// still starting then stays missing for the whole session. The servers
+	// must answer an MCP initialize before the CLI is started.
+	if err := waitForMCPServers(ctx, cfg.MCPServers, mcpReadyTimeout); err != nil {
 		_ = setup.gatewayConn.Close()
 		return nil, err
 	}
@@ -125,6 +134,7 @@ func newClaudeDaemon(ctx context.Context, cfg config.Config, version string, ses
 		claudeSession: session,
 		agent:         setup.agent,
 		tracing:       tracingExporter,
+		mcpReady:      true,
 	}, nil
 }
 
