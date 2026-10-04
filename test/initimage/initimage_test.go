@@ -8,9 +8,11 @@
 //  2. A glibc workspace image with no Node of its own runs the delivered agynd
 //     as UID 10001. agynd runs kind-a2a's execution-reporting gate as a required
 //     environment init script, which writes /run/agyn-execution/gate.json.
-//  3. The receiver runs on a TTY the way Agyn's TerminalGateway runs it:
-//     /agyn/bin/node -e "$(cat agyn-execution-receiver.cjs)". It must report
-//     ready, accept the binding, and print the runtime's configured.json.
+//  3. The receiver runs on a TTY the way Agyn's TerminalGateway runs it, with
+//     kind-a2a's receiverCommand and the workload proxy environment every task
+//     Pod carries: /agyn/bin/node --no-warnings -e "$(cat
+//     agyn-execution-receiver.cjs)". It must report ready, accept the binding,
+//     and print the runtime's configured.json, with no other terminal output.
 //  4. agynd then starts the agent CLI (test/fakeclaude) only after the MCP
 //     sidecar answers, with both MCP servers declared in ~/.claude.json, and
 //     acknowledges without a turn the inbox item the binding retired.
@@ -70,7 +72,7 @@ const (
 	workloadUID = 10001
 
 	// The kind-a2a revision deployed with this contract and its script hashes.
-	kindA2ARevision = "340eab71056e17631b6d711067f4b71768ace860"
+	kindA2ARevision = "90209d5638f118f2db705cbabc3259ecf5b39546"
 	receiverSHA256  = "713d79b272fbef421203ef8ea11f35fccfed834b62604a2d441fbe2b8616b9b4"
 	gateSHA256      = "6d9bd56441db32f0c915e7b70338e3df21bae2ffbbf3305dcd42415cf8dcc71d"
 
@@ -309,7 +311,12 @@ func runReceiver(t *testing.T, container, receiver string, payload []byte) (map[
 	receiverFile := filepath.Join(dir, "agyn-execution-receiver.cjs")
 	writeFile(t, receiverFile, receiver, 0o600)
 	wrapper := filepath.Join(dir, "terminal.sh")
-	writeFile(t, wrapper, "#!/bin/sh\nexec docker exec -it \"$CONTAINER\" /agyn/bin/node -e \"$(cat \"$RECEIVER_FILE\")\"\n", 0o700)
+	// The PTY merges stderr into the protocol: under NODE_USE_ENV_PROXY this
+	// Node prints an EnvHttpProxyAgent warning after the ready line, which the
+	// strict reader below rejects, unless the command passes --no-warnings.
+	writeFile(t, wrapper, "#!/bin/sh\nexec docker exec -it"+
+		" -e NODE_USE_ENV_PROXY=1 -e HTTP_PROXY=http://127.0.0.1:18080 -e HTTPS_PROXY=http://127.0.0.1:18080"+
+		" \"$CONTAINER\" /agyn/bin/node --no-warnings -e \"$(cat \"$RECEIVER_FILE\")\"\n", 0o700)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
