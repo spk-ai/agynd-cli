@@ -246,11 +246,21 @@ jobs:
           INIT_IMAGE: ${{ steps.target.outputs.image }}@${{ steps.verify.outputs.digest }}
         run: |
           set -euo pipefail
+          # The amd64 images were pulled by these index digests already, and
+          # Docker keeps one platform per digest: run the arm64 manifests.
+          arm64() {
+            local digest
+            digest="$(docker buildx imagetools inspect "$1" --raw |
+              jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest] | if length == 1 then .[0] else error("expected one linux/arm64 manifest") end')"
+            echo "${1%@*}@$digest"
+          }
+          init="$(arm64 "$INIT_IMAGE")"
+          workspace="$(arm64 "$ARM64_WORKSPACE_IMAGE")"
           agyn="$(mktemp -d)"
           chmod 0777 "$agyn"
           restricted=(--user 10001:10001 --read-only --cap-drop ALL --security-opt no-new-privileges --network none)
-          docker run --rm --platform linux/arm64 "${restricted[@]}" -v "$agyn:/agyn" "$INIT_IMAGE"
-          docker run --rm --platform linux/arm64 "${restricted[@]}" -v "$agyn:/agyn" "$ARM64_WORKSPACE_IMAGE" \
+          docker run --rm --platform linux/arm64 "${restricted[@]}" -v "$agyn:/agyn" "$init"
+          docker run --rm --platform linux/arm64 "${restricted[@]}" -v "$agyn:/agyn" "$workspace" \
             /bin/sh -c '/agyn/bin/node -e "if (process.arch !== \"arm64\") process.exit(1); console.log(process.version, process.arch)" && TERMINFO_DIRS=/agyn/terminfo /agyn/bin/tmux -V && test -x /agyn/bin/agynd'
 
       - name: Report whether the published image is publicly pullable
