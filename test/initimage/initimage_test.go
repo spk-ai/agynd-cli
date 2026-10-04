@@ -12,7 +12,8 @@
 //     /agyn/bin/node -e "$(cat agyn-execution-receiver.cjs)". It must report
 //     ready, accept the binding, and print the runtime's configured.json.
 //  4. agynd then starts the agent CLI (test/fakeclaude) only after the MCP
-//     sidecar answers, with both MCP servers declared in ~/.claude.json.
+//     sidecar answers, with both MCP servers declared in ~/.claude.json, and
+//     acknowledges without a turn the inbox item the binding retired.
 //
 // The gate and receiver are fetched from smartphonekey/kind-a2a at a pinned
 // revision and checked against their SHA-256; the reporting runtime itself is
@@ -64,6 +65,7 @@ const (
 	requestID     = "6f1d8a52-9d4e-4f7c-a8b1-1f0e6e2b7a06"
 	retiredID     = "6f1d8a52-9d4e-4f7c-a8b1-1f0e6e2b7a07"
 	threadID      = "6f1d8a52-9d4e-4f7c-a8b1-1f0e6e2b7a08"
+	senderID      = "6f1d8a52-9d4e-4f7c-a8b1-1f0e6e2b7a0a"
 
 	workloadUID = 10001
 
@@ -90,7 +92,7 @@ func TestInitImageDeliversAReportingCapableAgynd(t *testing.T) {
 	}
 	receiver := fetchKindA2A(t, "scripts/agyn-execution-receiver.cjs", receiverSHA256)
 	gate := fetchKindA2A(t, "scripts/agyn-execution-gate.cjs", gateSHA256)
-	work := t.TempDir()
+	work := workloadScratch(t)
 	agyn := worldWritableDir(t, work, "agyn")
 	workspace := worldWritableDir(t, work, "workspace")
 
@@ -175,6 +177,17 @@ func TestInitImageDeliversAReportingCapableAgynd(t *testing.T) {
 	case <-time.After(90 * time.Second):
 		t.Fatal("agynd did not reach its notification subscription after the gate")
 	}
+	// The inbox guard reads the control the receiver wrote: the retired request
+	// is acknowledged and journaled without running the agent.
+	select {
+	case <-gateway.acked:
+	case <-time.After(60 * time.Second):
+		t.Fatal("agynd did not acknowledge the retired inbox item")
+	}
+	journal := docker(t, "exec", name, "/bin/sh", "-c", "cat /workspace/.agyn/inbox-journal/"+instanceID+"/*")
+	if !strings.Contains(journal, `"message_id":"`+retiredID+`"`) || !strings.Contains(journal, `"state":"ack_only"`) {
+		t.Fatalf("inbox journal does not record the retired item as ack-only: %s", journal)
+	}
 
 	assertExecutionFiles(t, name)
 	assertClaudeStart(t, name, mcpPort)
@@ -194,15 +207,19 @@ func TestInitImageDeliversAReportingCapableAgynd(t *testing.T) {
 // root-owned. The gate cannot create /run/agyn-execution there; this records
 // what that base provides without failing the image under test.
 func TestQAWorkspaceBaseRunDirectory(t *testing.T) {
-	cmd := exec.Command("docker", append(append([]string{"run", "--rm", "--network", "none"}, restricted...),
-		"--entrypoint", "/bin/sh", qaBaseImage, "-c", "mkdir /run/agyn-execution && echo writable")...)
+	docker(t, "pull", "-q", qaBaseImage)
+	// The main container keeps the image's writable root; only the user is restricted.
+	cmd := exec.Command("docker", "run", "--rm", "--network", "none", "--user", fmt.Sprintf("%d:%d", workloadUID, workloadUID),
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--entrypoint", "/bin/sh", qaBaseImage,
+		"-c", "mkdir /run/agyn-execution && echo writable")
 	output, err := cmd.CombinedOutput()
 	if err == nil && strings.Contains(string(output), "writable") {
 		t.Logf("%s: /run is writable by UID %d", qaBaseImage, workloadUID)
 		return
 	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	fmt.Printf("::warning title=QA workspace /run::%s does not let UID %d create /run/agyn-execution (%s); the reporting gate fails unless the workspace image makes /run writable for it\n",
-		qaBaseImage, workloadUID, strings.TrimSpace(string(output)))
+		qaBaseImage, workloadUID, lines[len(lines)-1])
 }
 
 func assertDelivered(t *testing.T, agyn string) {
@@ -363,6 +380,11 @@ type gatewayStub struct {
 	subscribed chan struct{}
 	once       sync.Once
 	gate       string
+
+	mu      sync.Mutex
+	acked   chan struct{}
+	ackOnce sync.Once
+	isAcked bool
 }
 
 type agentsStub struct {
@@ -393,7 +415,7 @@ func startGateway(t *testing.T, gateScript string) *gatewayStub {
 	if err != nil {
 		t.Fatalf("listen gateway: %v", err)
 	}
-	stub := &gatewayStub{address: listener.Addr().String(), subscribed: make(chan struct{}), gate: gateScript}
+	stub := &gatewayStub{address: listener.Addr().String(), subscribed: make(chan struct{}), gate: gateScript, acked: make(chan struct{})}
 	server := grpc.NewServer()
 	gatewayv1.RegisterAgentsGatewayServer(server, agentsStub{gatewayStub: stub})
 	gatewayv1.RegisterThreadsGatewayServer(server, threadsStub{gatewayStub: stub})
@@ -423,6 +445,30 @@ func (s agentsStub) ListInitScripts(_ context.Context, req *agentsv1.ListInitScr
 		Script:      s.gate,
 		Description: "Trusted-local execution reporting gate; fail closed before the agent starts",
 	}}}, nil
+}
+
+// GetUnackedInboxItems offers the request the binding retired until it is acked.
+func (s agentsStub) GetUnackedInboxItems(_ context.Context, req *agentsv1.GetUnackedInboxItemsRequest) (*agentsv1.GetUnackedInboxItemsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.GetAgentInstanceId() != instanceID || s.isAcked {
+		return &agentsv1.GetUnackedInboxItemsResponse{}, nil
+	}
+	return &agentsv1.GetUnackedInboxItemsResponse{Items: []*agentsv1.InboxItem{{
+		Id: retiredID, AgentInstanceId: instanceID, SourceKind: agentsv1.InboxItemSourceKind_INBOX_ITEM_SOURCE_KIND_DIRECT,
+		SenderId: senderID, Body: "A request an earlier workload may have started", AcceptedAt: timestamppb.Now(),
+	}}}, nil
+}
+
+func (s agentsStub) AckInboxItems(_ context.Context, req *agentsv1.AckInboxItemsRequest) (*agentsv1.AckInboxItemsResponse, error) {
+	if req.GetAgentInstanceId() != instanceID || len(req.GetItemIds()) != 1 || req.GetItemIds()[0] != retiredID {
+		return nil, fmt.Errorf("unexpected acknowledgement %v", req.GetItemIds())
+	}
+	s.mu.Lock()
+	s.isAcked = true
+	s.mu.Unlock()
+	s.ackOnce.Do(func() { close(s.acked) })
+	return &agentsv1.AckInboxItemsResponse{}, nil
 }
 
 func (s threadsStub) GetUnackedMessages(context.Context, *threadsv1.GetUnackedMessagesRequest) (*threadsv1.GetUnackedMessagesResponse, error) {
@@ -512,6 +558,23 @@ func buildFakeClaude(t *testing.T, destination string) {
 	if err := os.Chmod(destination, 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// workloadScratch is a host directory whose contents the workload user owns;
+// they are removed as that user before the directory itself.
+func workloadScratch(t *testing.T) string {
+	t.Helper()
+	work, err := os.MkdirTemp("", "agynd-initimage-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("docker", append(append([]string{"run", "--rm", "--network", "none"}, restricted...),
+			"-v", work+":/work", "--entrypoint", "/bin/sh", workspaceImage,
+			"-c", "for d in /work/*; do find \"$d\" -mindepth 1 -delete; done")...).Run()
+		_ = os.RemoveAll(work)
+	})
+	return work
 }
 
 // worldWritableDir is an emptyDir: mode 0777 whatever the umask.
