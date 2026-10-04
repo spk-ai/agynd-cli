@@ -44,8 +44,9 @@ func TestHolderModePreparesTheAgentCLI(t *testing.T) {
 	if settings.Permissions.DefaultMode != "bypassPermissions" {
 		t.Fatalf("defaultMode = %q", settings.Permissions.DefaultMode)
 	}
-	if _, ok := settings.MCPServers["files"]; !ok {
-		t.Fatalf("mcp wiring lost: %v", settings.MCPServers)
+	declared, _ := readState(t, home)["mcpServers"].(map[string]any)
+	if _, ok := declared["files"]; !ok {
+		t.Fatalf("mcp wiring lost: %v", declared)
 	}
 }
 

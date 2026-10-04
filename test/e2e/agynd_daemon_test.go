@@ -142,6 +142,13 @@ func buildAgynd(t *testing.T) string {
 
 func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 	t.Helper()
+	installAgentRuntime(t, "agn", agentBinary)
+}
+
+// installAgentRuntime does what an agent runtime image does: it places the CLI
+// under the shared volume and names its SDK in /agyn/config.json.
+func installAgentRuntime(t *testing.T, sdk, agentBinary string) {
+	t.Helper()
 	runner := newPrivilegedRunner(t)
 	runner.run(t, "mkdir", "-p", "/agyn/bin")
 
@@ -169,7 +176,7 @@ func installAgentRuntimeConfig(t *testing.T, agentBinary string) {
 	t.Cleanup(func() { runner.run(t, "rm", "-f", installedPath) })
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	payload := fmt.Sprintf(`{"sdk":"agn","bin":%q}`, filepath.Join("bin", installedName))
+	payload := fmt.Sprintf(`{"sdk":%q,"bin":%q}`, sdk, filepath.Join("bin", installedName))
 	if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}

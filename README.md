@@ -24,6 +24,25 @@ it into the local VM, and set it as the agent's init image:
 agyn local load-image my-agent-init:dev
 ```
 
+## Reporting Init Image
+
+Every push to `docs/living-contracts` publishes
+`ghcr.io/spk-ai/agynd-cli-init:<commit>` from
+[Dockerfile.reporting-init](Dockerfile.reporting-init) through the
+[publish workflow](.github/workflows/publish-image.yml); pin the multi-platform
+index digest that run reports in the orchestrator's `AGYND_CLI_INIT_IMAGE`.
+Besides `agynd`, its trace hook, `tmux` and terminfo, the image delivers Node as
+`/agyn/bin/node` (with its C++ runtime in `/agyn/lib`) for init scripts and
+terminal commands such as execution reporting. The entrypoint runs as UID/GID
+10001 and writes only `/agyn`.
+
+The delivered Node is glibc-linked, so the workspace image must be glibc-based.
+The execution reporting gate creates `/run/agyn-execution` as the workload user,
+so a non-root workspace image must leave `/run` writable by that user. The
+[init image check](test/initimage/initimage_test.go) owns the exercised
+contract: a restricted workload, the pinned kind-a2a gate and receiver on a
+TTY, and the agent CLI started after its MCP servers answer.
+
 ## Persistent Codex State
 
 Provision a private durable volume per instance and configure `CODEX_HOME` for

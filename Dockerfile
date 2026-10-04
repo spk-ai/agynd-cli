@@ -23,9 +23,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY buf.gen.yaml buf.yaml ./
-RUN buf generate buf.build/agynio/api \
-    --path agynio/api/gateway/v1 \
-    --include-imports
+# buf.gen.yaml pins the spk-ai/api revision the bindings are generated from.
+RUN buf generate --include-imports --template buf.gen.yaml
 
 COPY . .
 
