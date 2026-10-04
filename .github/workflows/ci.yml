@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - docs/living-contracts
   pull_request:
 
 permissions:
@@ -31,13 +32,15 @@ jobs:
           version: 1.66.0
 
       - name: Generate protobuf bindings
-        run: |
-          buf generate buf.build/agynio/api \
-            --path agynio/api/gateway/v1 \
-            --include-imports
+        # buf.gen.yaml pins the spk-ai/api revision; see its inputs.
+        run: buf generate --include-imports --template buf.gen.yaml
 
       - name: Run tests
         run: go test ./...
+
+      # Shell, MCP and init-script startup ordering are lifecycle work.
+      - name: Run tests with the race detector
+        run: go test -race -count=1 ./...
 
       - name: Build
         run: go build ./...

@@ -9,12 +9,22 @@ managed:
     - file_option: go_package_prefix
       module: buf.build/opentelemetry/opentelemetry
 
+# The integration branch builds against the spk-ai/api fork the deployed
+# gateway and orchestrator forks are generated from, never a moving registry
+# label: CI, E2E and the published init image all generate from this input.
+inputs:
+  - git_repo: https://github.com/spk-ai/api.git
+    ref: f62e2ad47a5ea5451d88c3cc0138f73be708eb55
+    subdir: proto
+    paths:
+      - agynio/api/gateway/v1
+
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  - remote: buf.build/protocolbuffers/go:v1.36.11
     out: .gen/go
     opt:
       - paths=source_relative
-  - remote: buf.build/grpc/go
+  - remote: buf.build/grpc/go:v1.6.1
     out: .gen/go
     opt:
       - paths=source_relative

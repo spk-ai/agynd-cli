@@ -35,10 +35,8 @@ jobs:
           version: 1.66.0
 
       - name: Generate protobuf bindings
-        run: |
-          buf generate buf.build/agynio/api \
-            --path agynio/api/gateway/v1 \
-            --include-imports
+        # buf.gen.yaml pins the spk-ai/api revision; see its inputs.
+        run: buf generate --include-imports --template buf.gen.yaml
 
       - name: Build binaries
         env:
