@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func withTmuxPaths(t *testing.T) string {
@@ -27,21 +29,6 @@ func withTmuxPaths(t *testing.T) string {
 	return root
 }
 
-func stubTmuxCommand(t *testing.T, capture *[]string, captureEnv *[]string) {
-	t.Helper()
-	prev := tmuxCommandContext
-	t.Cleanup(func() { tmuxCommandContext = prev })
-
-	tmuxCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		*capture = append([]string{name}, args...)
-		cmd := exec.CommandContext(ctx, "true")
-		// The caller sets cmd.Env after we return, so record it lazily by
-		// handing back a command whose Env the caller will overwrite.
-		t.Cleanup(func() { *captureEnv = cmd.Env })
-		return cmd
-	}
-}
-
 // A missing binary must be survivable: an image whose multiplexer did not
 // arrive still serves ephemeral sessions, and losing those to a panic would
 // cost the terminal rather than just persistence.
@@ -56,7 +43,9 @@ func TestStartShellServerMissingBinaryIsNotFatal(t *testing.T) {
 		return exec.CommandContext(ctx, "true")
 	}
 
-	startShellServer(context.Background())
+	stop := startShellServer(context.Background())
+	stop()
+	stop()
 
 	if called {
 		t.Fatal("started a server with no binary present")
@@ -69,20 +58,126 @@ func TestStartShellServerInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var argv, env []string
-	stubTmuxCommand(t, &argv, &env)
+	var argv []string
+	var startup *exec.Cmd
+	prev := tmuxCommandContext
+	t.Cleanup(func() { tmuxCommandContext = prev })
+	tmuxCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "true")
+		if slices.Contains(args, "start-server") {
+			argv, startup = append([]string{name}, args...), cmd
+		}
+		return cmd
+	}
 
-	startShellServer(context.Background())
+	stop := startShellServer(context.Background())
+	t.Cleanup(stop)
+	stop()
 
 	want := []string{tmuxBinaryPath, "-L", "agyn", "-f", tmuxConfigPath, "start-server"}
 	if !slices.Equal(argv, want) {
 		t.Fatalf("argv = %v, want %v", argv, want)
+	}
+	if startup == nil || !slices.Contains(startup.Env, "TMUX_TMPDIR="+tmuxSocketDir) {
+		t.Fatal("startup did not inherit the private socket environment")
 	}
 
 	// The socket directory is normally the init container's to create; agynd
 	// creating it as a fallback is what keeps a hand-run container working.
 	if info, err := os.Stat(tmuxSocketDir); err != nil || !info.IsDir() {
 		t.Fatalf("socket dir not created: %v", err)
+	}
+}
+
+func TestStartShellServerStartupFailureCanStop(t *testing.T) {
+	for _, failure := range []string{"socket-directory", "command"} {
+		t.Run(failure, func(t *testing.T) {
+			withTmuxPaths(t)
+			if err := os.WriteFile(tmuxBinaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "socket-directory" {
+				if err := os.WriteFile(tmuxSocketDir, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			called := false
+			prev := tmuxCommandContext
+			t.Cleanup(func() { tmuxCommandContext = prev })
+			tmuxCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				called = true
+				return exec.CommandContext(ctx, "false")
+			}
+			stop := startShellServer(context.Background())
+			stop()
+			stop()
+			if called != (failure == "command") {
+				t.Fatal("startup did not stop at the failed prerequisite")
+			}
+		})
+	}
+}
+
+func TestStartShellServerJoinsTitleWorker(t *testing.T) {
+	for _, mode := range []string{"explicit-stop", "parent-cancellation"} {
+		t.Run(mode, func(t *testing.T) {
+			withTmuxPaths(t)
+			if err := os.WriteFile(tmuxBinaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered, release := make(chan context.Context, 1), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			prev := tmuxCommandContext
+			t.Cleanup(func() { tmuxCommandContext = prev })
+			tmuxCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				if slices.Contains(args, "list-clients") {
+					select {
+					case entered <- ctx:
+					default:
+					}
+					// Hold the actual worker independently of cancellation so the
+					// cleanup must join it, not merely cancel its context.
+					<-release
+				}
+				return exec.CommandContext(ctx, "true")
+			}
+			stop := startShellServer(ctx)
+			t.Cleanup(func() { unblock(); stop() })
+			var commandCtx context.Context
+			select {
+			case commandCtx = <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("title worker did not poll the attached clients")
+			}
+			if mode == "parent-cancellation" {
+				cancel()
+			}
+			stopped := make(chan struct{})
+			go func() { stop(); close(stopped) }()
+			select {
+			case <-commandCtx.Done():
+			case <-time.After(time.Second):
+				t.Fatal("refresh command did not receive cancellation")
+			}
+			select {
+			case <-stopped:
+				t.Fatal("cleanup returned before the title worker exited")
+			case <-time.After(25 * time.Millisecond):
+			}
+			unblock()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("cleanup did not join the released title worker")
+			}
+			stop()
+			if mode == "explicit-stop" && ctx.Err() != nil {
+				t.Fatal("title cleanup canceled its caller")
+			}
+		})
 	}
 }
 
